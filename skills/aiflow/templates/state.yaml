@@ -1,0 +1,32 @@
+# aiflow 机器状态。顶层字段不要改名；列表既可写 []，也可写缩进的 - 列表。
+project: "未命名项目"
+stage: 0
+expert: analyst
+mode: 1
+facts_version: 0
+artifacts:
+  - 00-intake.md
+open_bugs: []
+pending_decisions: []
+decision_log: []
+
+# 阶段 5 起登记：T1: done / partial / pending。进入阶段 6 前必须全部 done。
+task_status: {}
+
+# 阶段 6 起登记：A1: pass / fail / uncovered。完成阶段 6 时不得有 uncovered；回归完成时全部 pass。
+acceptance_results: {}
+
+# 阶段 8 起登记。conditional 必须同时填写条件并取得用户显式确认。
+regression_result: not_run
+regression_conditions: []
+regression_user_confirmed: false
+
+# 阶段 9 起登记：planned / deployed / verified / rolled_back。只有 verified 算上线完成。
+release_status: planned
+
+# 模式 2/3 记录 developer、tester；阶段 7 用原 developer ID 恢复开发会话。
+# 模式 3 另需 final_reviewer（可填 human:<姓名> 或 model:<名称>）及独立终验证据。
+agent_sessions: {}
+final_review_result: not_run
+final_review_evidence: ""
+updated_at: "YYYY-MM-DDThh:mm:ss+08:00"

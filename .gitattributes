@@ -1,0 +1,8 @@
+# 文本文件统一用 LF，不管本机 core.autocrlf 怎么设
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.pptx binary
+*.docx binary
