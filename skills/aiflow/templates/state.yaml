@@ -1,4 +1,5 @@
 # aiflow 机器状态。顶层字段不要改名；列表既可写 []，也可写缩进的 - 列表。
+flow_version: 2
 project: "未命名项目"
 stage: 0
 expert: analyst
@@ -7,24 +8,42 @@ facts_version: 0
 artifacts:
   - 00-intake.md
 open_bugs: []
-pending_decisions: []
-decision_log: []
+open_ux_issues: []
 
-# 阶段 5 起登记：T1: done / partial / pending。进入阶段 6 前必须全部 done。
+# questions.md 中「待问 / 待答复」的编号，与台账保持一致。
+pending_decisions: []
+
+# 用户确认：pending / confirmed / skipped。只有用户本人明确确认才能写 confirmed。
+# prototype、design 在不需要时写 skipped。
+signoffs:
+  scope: pending
+  requirement: pending
+  prd: pending
+  prototype: pending
+  design: pending
+
+# 阶段 2 由 PRD 的「交付形态判断」决定，用户确认 PRD 后填 true / false。
+prototype_required: null
+design_required: null
+
+# 阶段 6 起登记：T1: done / partial / pending。进入阶段 7 前必须全部 done。
 task_status: {}
 
-# 阶段 6 起登记：A1: pass / fail / uncovered。完成阶段 6 时不得有 uncovered；回归完成时全部 pass。
+# 阶段 7 起登记：pass / fail / not_run；不需要设计稿时为 skipped。
+walkthrough_result: not_run
+
+# 阶段 8 起登记：A1: pass / fail / uncovered。完成阶段 8 时不得有 uncovered；回归完成时全部 pass。
 acceptance_results: {}
 
-# 阶段 8 起登记。conditional 必须同时填写条件并取得用户显式确认。
+# 阶段 10 起登记。conditional 必须同时填写条件并取得用户显式确认。
 regression_result: not_run
 regression_conditions: []
 regression_user_confirmed: false
 
-# 阶段 9 起登记：planned / deployed / verified / rolled_back。只有 verified 算上线完成。
+# 阶段 11 起登记：planned / deployed / verified / rolled_back。只有 verified 算上线完成。
 release_status: planned
 
-# 模式 2/3 记录 developer、tester；阶段 7 用原 developer ID 恢复开发会话。
+# 模式 2/3 记录 developer、designer、tester；阶段 9 用原 developer ID 恢复开发会话。
 # 模式 3 另需 final_reviewer（可填 human:<姓名> 或 model:<名称>）及独立终验证据。
 agent_sessions: {}
 final_review_result: not_run

@@ -1,0 +1,53 @@
+/* 样式预设 element-plus：Element Plus 2.x 默认主题。design-system.md 写「样式预设：element-plus」时，
+   build.py 把本文件拼在 kit.css 之后、项目令牌之前；项目的令牌表和 _src/theme.css 仍然可以覆盖这里的任何值。
+   derive: bg=0.9 bd=0.8 text=0
+   （改了主色、成功、警告、错误、信息色时，按 Element 的色阶派生：浅 9 背景、浅 8 描边，文字用类型色本身） */
+:root {
+  --primary:#409eff; --primary-bg:#ecf5ff; --primary-bd:#d9ecff; --primary-text:#409eff;
+  --success:#67c23a; --success-bg:#f0f9eb; --success-bd:#e1f3d8; --success-text:#67c23a;
+  --warning:#e6a23c; --warning-bg:#fdf6ec; --warning-bd:#faecd8; --warning-text:#e6a23c;
+  --error:#f56c6c; --error-bg:#fef0f0; --error-bd:#fde2e2; --error-text:#f56c6c;
+  --info:#909399; --info-bg:#f4f4f5; --info-bd:#e9e9eb; --info-text:#909399;
+  --text:#303133; --text2:#606266; --text3:#909399; --text-dis:#a8abb2;
+  --border:#dcdfe6; --border-light:#e4e7ed; --split:#ebeef5; --fill:#f5f7fa; --fill-dis:#f5f7fa; --fill-strong:#f0f2f5;
+  --layout:#f2f3f5; --surface:#ffffff;
+  --header-bg:#ffffff; --header-text:#303133; --header-text2:#606266; --header-h:60px;
+  --font:"Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+  --font-size:14px; --font-size-title:20px;
+  --radius:4px; --radius-lg:4px; --radius-sm:4px; --radius-checkbox:2px;
+  --danger-plain-bd:#fab6b6;
+}
+/* 顶栏白底、底部浅边框；菜单选中用主色文字 + 2px 下划线，不铺背景 */
+.hd { border-bottom:1px solid var(--border-light); }
+.menu-item.on { background:none; color:var(--primary); box-shadow:inset 0 -2px 0 var(--primary); }
+.main { padding:20px; }
+/* 卡片：1px 浅边框、无阴影；卡片头 18px 20px、16px 字 */
+.card { border:1px solid var(--border-light); box-shadow:none; }
+.card-hd { padding:18px 20px; border-bottom-color:var(--border-light); font-size:16px; }
+.card-bd { padding:20px; }
+/* 表头白底、次要文字色 */
+.tbl th { background:var(--surface); color:var(--text3); }
+/* 标签：高 24px、左右 9px */
+.tag { padding:0 9px; line-height:22px; }
+/* 提示条：无描边 */
+.alert, .alert.warn, .alert.error, .alert.success { border-color:transparent; }
+/* 消息提示：浅 9 背景、浅 8 描边、文字用类型色、无阴影 */
+.msg { background:var(--warning-bg); border:1px solid var(--warning-bd); color:var(--warning-text); box-shadow:none; }
+.msg.error { background:var(--error-bg); border-color:var(--error-bd); color:var(--error-text); }
+.msg.success { background:var(--success-bg); border-color:var(--success-bd); color:var(--success-text); }
+/* 分页：带背景、页码无描边；当前页主色实心白字 */
+.pager .pg { border:none; background:var(--fill-strong); line-height:32px; }
+.pager .pg.on { background:var(--primary); color:#fff; }
+/* 时间轴：12px 实心圆，按类型着色；连线 2px 浅边框色 */
+.tl li::before { left:0; top:4px; width:12px; height:12px; border:none; background:var(--primary); }
+.tl li.green::before { background:var(--success); } .tl li.red::before { background:var(--error); } .tl li.gray::before { background:var(--border-light); }
+.tl li::after { left:5px; top:18px; border-left-color:var(--border-light); }
+/* 弹窗标题 18px；弹窗、浮层阴影 */
+.modal h4 { font-size:18px; }
+.modal { box-shadow:0 12px 32px 4px rgba(0,0,0,.04),0 8px 20px rgba(0,0,0,.08); }
+.pop { box-shadow:0 0 12px rgba(0,0,0,.12); }
+/* 危险按钮：触发用朴素按钮，确认用实心 */
+.btn.danger { background:var(--error-bg); border-color:var(--danger-plain-bd); color:var(--error); }
+.btn.pri.danger { background:var(--error); border-color:var(--error); color:#fff; }
+/* 辅助文字 13px */
+.help, .ferr { font-size:13px; }
