@@ -17,6 +17,8 @@
 npx skills add SotherWind/aiflow
 ```
 
+它会列出仓库里的 skill，问你装进哪个工具。也可以直接指定：`-a claude-code` 指定工具，`-g` 装到用户目录、所有项目都能用，`-y` 不再逐项确认。
+
 不用 Node.js 时，把 `skills/aiflow/` 整个目录复制到所用工具的 skills 目录，目录名保持 `aiflow`：
 
 - Claude Code：`~/.claude/skills/aiflow`
