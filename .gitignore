@@ -1,0 +1,24 @@
+# 仓库只放 skill 本身：skills/、README.md、LICENSE、.gitignore、.gitattributes。
+# 下面这些是本地工作材料，留在本机，不进仓库。
+
+# 分享材料
+/AI全流程交付工作流/
+/output/
+
+# 试跑记录、示例项目、设计规范试用件
+/aiflow-runs/
+/aiflow-test/
+/企业智能客服/
+/设计规范-Element主题/
+
+# 工具的本地文件
+/.claude/
+/.workbuddy/
+/.playwright-mcp/
+
+# 运行时生成
+__pycache__/
+*.pyc
+_built.css
+.DS_Store
+Thumbs.db
