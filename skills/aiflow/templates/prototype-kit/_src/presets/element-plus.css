@@ -1,7 +1,11 @@
 /* 样式预设 element-plus：Element Plus 2.x 默认主题。design-system.md 写「样式预设：element-plus」时，
    build.py 把本文件拼在 kit.css 之后、项目令牌之前；项目的令牌表和 _src/theme.css 仍然可以覆盖这里的任何值。
    derive: bg=0.9 bd=0.8 text=0
-   （改了主色、成功、警告、错误、信息色时，按 Element 的色阶派生：浅 9 背景、浅 8 描边，文字用类型色本身） */
+   （改了主色、成功、警告、错误、信息色时，按 Element 的色阶派生：浅 9 背景、浅 8 描边，文字用类型色本身）
+   取值和真实组件库对照过：scripts/parity/kit.html?preset=element-plus 对 scripts/parity/element-plus.html，parity.js 比较结果为空。
+   对照版本：element-plus 2.14.7，2026-11-01。每段注释写了对应 Element Plus 的哪个组件、哪些属性；对照方法见 references/design-system.md「样式包和组件库对照」。
+   这里只放组件库默认的样子。项目规范和默认不一样的（比如卡片标题 16px），写在项目的 _src/theme.css，
+   并列进 03-design.md「实现时要改组件库默认值的地方」，前端照着改。 */
 :root {
   --primary:#409eff; --primary-bg:#ecf5ff; --primary-bd:#d9ecff; --primary-text:#409eff;
   --success:#67c23a; --success-bg:#f0f9eb; --success-bd:#e1f3d8; --success-text:#67c23a;
@@ -11,43 +15,127 @@
   --text:#303133; --text2:#606266; --text3:#909399; --text-dis:#a8abb2;
   --border:#dcdfe6; --border-light:#e4e7ed; --split:#ebeef5; --fill:#f5f7fa; --fill-dis:#f5f7fa; --fill-strong:#f0f2f5;
   --layout:#f2f3f5; --surface:#ffffff;
-  --header-bg:#ffffff; --header-text:#303133; --header-text2:#606266; --header-h:60px;
+  --header-bg:#ffffff; --header-text:#303133; --header-text2:#303133; --header-h:60px;
   --font:"Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
   --font-size:14px; --font-size-title:20px;
   --radius:4px; --radius-lg:4px; --radius-sm:4px; --radius-checkbox:2px;
-  --danger-plain-bd:#fab6b6;
+  --danger-plain-bd:#fab6b6; --mask-bg:rgba(0,0,0,.5); --avatar-bg:#c0c4cc;
+  --check-font-sizes:12 13 14 16 18 20; --check-radii:2 3 4; --check-btn-heights:24 32 40; --check-input-heights:24 32 40; --check-tag-heights:20 24 32;
 }
-/* 顶栏白底、底部浅边框；菜单选中用主色文字 + 2px 下划线，不铺背景 */
+/* 顶栏白底、底部浅边框（Element 没有顶栏组件，这是 Element 后台的常见写法）。菜单对应 el-menu mode="horizontal"：
+   左右 20px，选中项主色文字、下方 2px 主色线，不铺背景 */
 .hd { border-bottom:1px solid var(--border-light); }
-.menu-item.on { background:none; color:var(--primary); box-shadow:inset 0 -2px 0 var(--primary); }
+.menu-item { box-sizing:border-box; height:calc(var(--header-h) - 1px); line-height:calc(var(--header-h) - 4px); padding:0 20px; border-bottom:2px solid transparent; }
+.menu-item.on { background:none; color:var(--primary); border-bottom-color:var(--primary); }
 .main { padding:20px; }
-/* 卡片：1px 浅边框、无阴影；卡片头 18px 20px、16px 字 */
+/* 面包屑：对应 el-breadcrumb separator="/"。文字常规文字色、行高 1；能点的一级（带 to）主要文字色、加粗；分隔符占位文字色、加粗、左右 9px */
+.crumb { color:var(--text2); line-height:1; } .crumb b { color:var(--text2); font-weight:normal; }
+.crumb .sep { margin:0 9px; font-weight:bold; color:var(--text-dis); } .crumb a { color:var(--text); font-weight:bold; }
+/* 卡片：对应 el-card shadow="never"（Element 默认带阴影，后台常关掉）。1px 浅边框；卡片头 18px 20px、标题正文字号不加粗；正文 20px */
 .card { border:1px solid var(--border-light); box-shadow:none; }
-.card-hd { padding:18px 20px; border-bottom-color:var(--border-light); font-size:16px; }
+.card-hd { padding:18px 20px; border-bottom-color:var(--border-light); font-size:var(--font-size); font-weight:normal; }
 .card-bd { padding:20px; }
-/* 表头白底、次要文字色 */
-.tbl th { background:var(--surface); color:var(--text3); }
-/* 标签：高 24px、左右 9px */
+/* 表格：对应 el-table。单元格上下 8px、左右 12px、行高 23px（一行 40px）；表头白底、次要文字色、加粗；正文常规文字色 */
+.tbl th, .tbl td { padding:8px 12px; line-height:23px; }
+.tbl th { background:var(--surface); color:var(--text3); } .tbl td { color:var(--text2); }
+/* 页签：对应 el-tabs 默认样式。页签高 40px、文字间距 40px、字重 500；底线 2px 浅边框色；选中项主色、下方 2px 主色条 */
+.tabs { position:relative; gap:40px; border-bottom:none; margin-bottom:14px; }
+.tabs::after { content:""; position:absolute; left:0; right:0; bottom:0; height:2px; background:var(--border-light); }
+.tabs span { position:relative; z-index:1; height:40px; padding:0; line-height:40px; color:var(--text); font-weight:500; }
+.tabs .on { color:var(--primary); border-bottom:none; box-shadow:inset 0 -2px 0 var(--primary); }
+/* 分页：对应 el-pagination background。页码 32 × 32、圆角 2px、填充色、无描边；当前页主色实心、白字、加粗 */
+.pager .pg { border:none; border-radius:2px; background:var(--fill-strong); color:var(--text); line-height:32px; }
+.pager .pg.on { background:var(--primary); color:#fff; font-weight:bold; }
+/* 标签：对应 el-tag（默认 effect="light"）。高 24px、左右 9px */
 .tag { padding:0 9px; line-height:22px; }
-/* 提示条：无描边 */
-.alert, .alert.warn, .alert.error, .alert.success { border-color:transparent; }
-/* 消息提示：浅 9 背景、浅 8 描边、文字用类型色、无阴影 */
-.msg { background:var(--warning-bg); border:1px solid var(--warning-bd); color:var(--warning-text); box-shadow:none; }
-.msg.error { background:var(--error-bg); border-color:var(--error-bd); color:var(--error-text); }
-.msg.success { background:var(--success-bg); border-color:var(--success-bd); color:var(--success-text); }
-/* 分页：带背景、页码无描边；当前页主色实心白字 */
-.pager .pg { border:none; background:var(--fill-strong); line-height:32px; }
-.pager .pg.on { background:var(--primary); color:#fff; }
-/* 时间轴：12px 实心圆，按类型着色；连线 2px 浅边框色 */
-.tl li::before { left:0; top:4px; width:12px; height:12px; border:none; background:var(--primary); }
-.tl li.green::before { background:var(--success); } .tl li.red::before { background:var(--error); } .tl li.gray::before { background:var(--border-light); }
-.tl li::after { left:5px; top:18px; border-left-color:var(--border-light); }
-/* 弹窗标题 18px；弹窗、浮层阴影 */
-.modal h4 { font-size:18px; }
-.modal { box-shadow:0 12px 32px 4px rgba(0,0,0,.04),0 8px 20px rgba(0,0,0,.08); }
-.pop { box-shadow:0 0 12px rgba(0,0,0,.12); }
-/* 危险按钮：触发用朴素按钮，确认用实心 */
+/* 徽标：对应 el-badge（不包内容时行内显示）。高 18px、左右 6px、白色 1px 描边、胶囊形 */
+.badge { box-sizing:content-box; min-width:0; height:18px; padding:0 6px; border:1px solid var(--surface); border-radius:10px; line-height:18px; }
+/* 按钮：对应 el-button。字重 500、没有投影，默认按钮用常规文字色；大号左右 19px、字号不变；小号左右 11px、12px 字、圆角 3px；
+   文字按钮（link）高度随文字；禁用按钮白底浅边框。危险操作的触发按钮用 type="danger" plain，确认用 type="danger" */
+.btn { color:var(--text2); font-weight:500; box-shadow:none; } .btn.pri { box-shadow:none; }
+.btn.lg { padding:0 19px; font-size:var(--font-size); } .btn.sm { padding:0 11px; font-size:12px; border-radius:3px; }
+.btn.link { height:auto; padding:2px; line-height:1; border:1px solid transparent; }
+.btn.dis { background:var(--surface); border-color:var(--border-light); color:var(--text-dis); }
 .btn.danger { background:var(--error-bg); border-color:var(--danger-plain-bd); color:var(--error); }
 .btn.pri.danger { background:var(--error); border-color:var(--error); color:#fff; }
-/* 辅助文字 13px */
-.help, .ferr { font-size:13px; }
+.row:has(> .btn, > .an > .btn), .modal .ft { gap:12px; }
+/* 输入框：对应 el-input / el-select。大号左右 15px；多行输入框上下 5px、左右 11px、行高 1.5；聚焦只把边框变成主色，不加外发光 */
+.inp.lg { padding:0 14px; } .inp.ta { padding:4px 10px; line-height:1.5; } .inp.focus { box-shadow:none; }
+/* 表单：对应 el-form label-position="top"。项间距 18px；标签常规文字色；校验文字 12px、行高 1，放在输入框下方的间距里，不撑高表单 */
+.fi { position:relative; margin-bottom:18px; } .fi > label { color:var(--text2); }
+.ferr { font-size:12px; } .fi > .ferr { position:absolute; left:0; top:100%; margin:0; padding-top:2px; line-height:1; }
+/* 复选框：对应 el-checkbox。方框 14px、圆角 2px；文字常规文字色、字重 500；选中时主色实心加白色对勾 */
+.chk { height:32px; color:var(--text2); font-weight:500; line-height:1; }
+.chk::before { box-sizing:border-box; width:14px; height:14px; }
+.chk.on::before { box-shadow:none; border-color:var(--primary); background:var(--primary) url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2012%2012%27%3E%3Cpath%20d%3D%27M3.5%205.8L5.3%207.6%208.8%203.8%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%271.2%27%2F%3E%3C%2Fsvg%3E") center/12px no-repeat; }
+/* 提示条：对应 el-alert show-icon :closable="false"；.alert 是 type="primary"，.warn / .error / .success 是同名 type。
+   无描边，上下 8px、左右 16px，文字用类型色，图标 16px */
+.alert { align-items:center; padding:8px 16px; border:none; border-radius:var(--radius); line-height:24px; color:var(--primary); }
+.alert::before { margin-top:0; }
+.alert.warn { color:var(--warning); } .alert.error { color:var(--error); } .alert.success { color:var(--success); }
+/* 消息提示：对应 ElMessage；.msg 是 type="warning"，.error / .success 是同名 type。浅 9 背景、浅 8 描边、类型色文字、无阴影；
+   上下 11px、左右 15px，图标 14px、距文字 8px */
+.msg { gap:8px; padding:11px 15px; line-height:1; background:var(--warning-bg); border:1px solid var(--warning-bd); color:var(--warning-text); box-shadow:none; }
+.msg::before { width:14px; height:14px; font-size:10px; line-height:14px; }
+.msg.error { background:var(--error-bg); border-color:var(--error-bd); color:var(--error-text); }
+.msg.success { background:var(--success-bg); border-color:var(--success-bd); color:var(--success-text); }
+/* 时间轴：对应 el-timeline；li 是 type="primary"，.green / .red 是 success / danger，.gray 是不写 type。
+   节点 12px 实心圆；连线 2px 浅边框色；左边 28px；时间 13px、在内容下方 8px；每项下方 20px */
+.tl li { padding:0 0 20px 28px; }
+.tl li::before { z-index:1; left:-1px; top:3px; width:12px; height:12px; border:none; background:var(--primary); }
+.tl li.green::before { background:var(--success); } .tl li.red::before { background:var(--error); } .tl li.gray::before { background:var(--border-light); }
+.tl li::after { left:4px; top:0; bottom:0; border-left-color:var(--border-light); }
+.tl .t { margin-top:8px; font-size:13px; line-height:1; color:var(--text3); }
+/* 步骤条：对应 el-steps 默认横向（图标在上、标题在下）；.done 是 finish，.cur 是 process，其余是 wait。
+   图标 24px 白底圆环 2px、数字 14px 加粗；标题 16px、行高 38px；连线 2px 占位文字色，下一步已完成时为主色 */
+.steps { gap:0; align-items:flex-start; }
+.step { position:relative; display:block; flex:1 1 0; min-width:0; color:var(--text-dis); font-size:16px; line-height:38px; white-space:nowrap; }
+.step:last-child { flex:0 0 auto; }
+.step .dot { position:relative; z-index:1; display:flex; box-sizing:border-box; width:24px; height:24px; border:2px solid currentColor; background:var(--surface); font-size:14px; font-weight:bold; line-height:1; }
+.step.done { color:var(--primary); } .step.cur { color:var(--text); font-weight:bold; }
+.step.done .dot, .step.cur .dot { border-color:currentColor; background:var(--surface); color:inherit; }
+.step::after { position:absolute; left:0; right:0; top:11px; height:2px; background:var(--text-dis); }
+.step.done::after { background:var(--text-dis); } .step:has(+ .step.done)::after { background:var(--primary); } .step:last-child::after { display:none; }
+/* 弹窗：对应 el-dialog（宽 520px）。内边距 16px；标题 18px 不加粗、距正文 16px；正文常规文字色；底部按钮距正文 16px、间距 12px；
+   右上角关闭按钮 48 × 48。遮罩 rgba(0,0,0,.5) */
+.modal { padding:16px; color:var(--text2); box-shadow:0 12px 32px 4px rgba(0,0,0,.04),0 8px 20px rgba(0,0,0,.08); }
+.modal h4 { margin:0 0 16px; padding-right:32px; font-size:18px; font-weight:normal; line-height:24px; color:var(--text); }
+.modal .ft { margin-top:16px; }
+.modal::after { top:0; right:0; width:48px; height:48px; font-size:20px; line-height:48px; color:var(--info); }
+/* 气泡：对应 el-popover。1px 浅边框、圆角 4px、浮层阴影 */
+.pop { border:1px solid var(--border-light); box-shadow:0 0 12px rgba(0,0,0,.12); }
+/* 结果：对应 el-result。上下 40px、左右 30px；图标 64px；标题 20px 不加粗，和图标的可见间距 26px（Element 的 20px 外边距加图标所在行多出的 6px）；
+   副标题 14px 常规文字色、距标题 10px；按钮距上方 30px。info 图标是灰色 */
+.result { padding:40px 30px; } .result .ic { display:flex; margin:0 auto; } .result .ic.info { background:var(--info); }
+.result h3 { margin:26px 0 0; font-size:20px; font-weight:normal; line-height:1.3; }
+.result p { margin:10px 0 0; line-height:1.3; color:var(--text2); }
+.result > .btn, .result > .row { margin-top:30px; }
+/* 空状态：对应 el-empty（默认插图）。上下 40px；插图宽 160px；说明文字次要色、距插图 20px */
+.empty { padding:40px 0; color:var(--text3); }
+.empty .box { width:160px; height:auto; aspect-ratio:79/86; margin:0 auto 20px; border:none; border-radius:0; background:url("data:image/svg+xml,%3Csvg%20viewBox%3D%270%200%2079%2086%27%20version%3D%271.1%27%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20xmlns%3Axlink%3D%27http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27linearGradient-1%27%20x1%3D%2738.8503086%25%27%20y1%3D%270%25%27%20x2%3D%2761.1496914%25%27%20y2%3D%27100%25%27%3E%3Cstop%20stop-color%3D%27%23fcfcfd%27%20offset%3D%270%25%27%3E%3C%2Fstop%3E%3Cstop%20stop-color%3D%27%23eeeff3%27%20offset%3D%27100%25%27%3E%3C%2Fstop%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%27linearGradient-2%27%20x1%3D%270%25%27%20y1%3D%279.5%25%27%20x2%3D%27100%25%27%20y2%3D%2790.5%25%27%3E%3Cstop%20stop-color%3D%27%23fcfcfd%27%20offset%3D%270%25%27%3E%3C%2Fstop%3E%3Cstop%20stop-color%3D%27%23e9ebef%27%20offset%3D%27100%25%27%3E%3C%2Fstop%3E%3C%2FlinearGradient%3E%3Crect%20id%3D%27path-3%27%20x%3D%270%27%20y%3D%270%27%20width%3D%2717%27%20height%3D%2736%27%3E%3C%2Frect%3E%3C%2Fdefs%3E%3Cg%20stroke%3D%27none%27%20stroke-width%3D%271%27%20fill%3D%27none%27%20fill-rule%3D%27evenodd%27%3E%3Cg%20transform%3D%27translate%28-1268.000000%2C%20-535.000000%29%27%3E%3Cg%20transform%3D%27translate%281268.000000%2C%20535.000000%29%27%3E%3Cpath%20d%3D%27M39.5%2C86%20C61.3152476%2C86%2079%2C83.9106622%2079%2C81.3333333%20C79%2C78.7560045%2057.3152476%2C78%2035.5%2C78%20C13.6847524%2C78%200%2C78.7560045%200%2C81.3333333%20C0%2C83.9106622%2017.6847524%2C86%2039.5%2C86%20Z%27%20fill%3D%27%23f7f8fc%27%3E%3C%2Fpath%3E%3Cpolygon%20fill%3D%27%23e5e7e9%27%20transform%3D%27translate%2827.500000%2C%2051.500000%29%20scale%281%2C%20-1%29%20translate%28-27.500000%2C%20-51.500000%29%20%27%20points%3D%2713%2058%2053%2058%2042%2045%202%2045%27%3E%3C%2Fpolygon%3E%3Cg%20transform%3D%27translate%2834.500000%2C%2031.500000%29%20scale%28-1%2C%201%29%20rotate%28-25.000000%29%20translate%28-34.500000%2C%20-31.500000%29%20translate%287.000000%2C%2010.000000%29%27%3E%3Cpolygon%20fill%3D%27%23e5e7e9%27%20transform%3D%27translate%2811.500000%2C%205.000000%29%20scale%281%2C%20-1%29%20translate%28-11.500000%2C%20-5.000000%29%20%27%20points%3D%272.84078316e-14%203%2018%203%2023%207%205%207%27%3E%3C%2Fpolygon%3E%3Cpolygon%20fill%3D%27%23edeef2%27%20points%3D%27-3.69149156e-15%207%2038%207%2038%2043%20-3.69149156e-15%2043%27%3E%3C%2Fpolygon%3E%3Crect%20fill%3D%27url%28%23linearGradient-1%29%27%20transform%3D%27translate%2846.500000%2C%2025.000000%29%20scale%28-1%2C%201%29%20translate%28-46.500000%2C%20-25.000000%29%20%27%20x%3D%2738%27%20y%3D%277%27%20width%3D%2717%27%20height%3D%2736%27%3E%3C%2Frect%3E%3Cpolygon%20fill%3D%27%23f8f9fb%27%20transform%3D%27translate%2839.500000%2C%203.500000%29%20scale%28-1%2C%201%29%20translate%28-39.500000%2C%20-3.500000%29%20%27%20points%3D%2724%207%2041%207%2055%20-3.63806207e-12%2038%20-3.63806207e-12%27%3E%3C%2Fpolygon%3E%3C%2Fg%3E%3Crect%20fill%3D%27url%28%23linearGradient-2%29%27%20x%3D%2713%27%20y%3D%2745%27%20width%3D%2740%27%20height%3D%2736%27%3E%3C%2Frect%3E%3Cg%20transform%3D%27translate%2853.000000%2C%2045.000000%29%27%3E%3Cuse%20fill%3D%27%23e0e3e9%27%20transform%3D%27translate%288.500000%2C%2018.000000%29%20scale%28-1%2C%201%29%20translate%28-8.500000%2C%20-18.000000%29%20%27%20xlink%3Ahref%3D%27%23path-3%27%3E%3C%2Fuse%3E%3Cpolygon%20fill%3D%27%23d5d7de%27%20mask%3D%27url%28%23mask-4%29%27%20transform%3D%27translate%2812.000000%2C%209.000000%29%20scale%28-1%2C%201%29%20translate%28-12.000000%2C%20-9.000000%29%20%27%20points%3D%277%200%2024%200%2020%2018%207%2016.5%27%3E%3C%2Fpolygon%3E%3C%2Fg%3E%3Cpolygon%20fill%3D%27%23f8f9fb%27%20transform%3D%27translate%2866.000000%2C%2051.500000%29%20scale%28-1%2C%201%29%20translate%28-66.000000%2C%20-51.500000%29%20%27%20points%3D%2762%2045%2079%2045%2070%2058%2053%2058%27%3E%3C%2Fpolygon%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E") center/contain no-repeat; }
+/* 骨架屏：对应 el-skeleton（静态）。条高 16px、圆角 4px、填充色；条间距 22px */
+.skel { margin:0 0 22px; background:var(--fill-strong); }
+/* 图标：用 Element Plus 自己的图标（@element-plus/icons-svg 2.3.2）做遮罩，颜色是背景色。
+   结果页 success / warning / error / info 对应 CircleCheckFilled / WarningFilled / CircleCloseFilled / InfoFilled，64px、类型色；
+   提示条 16px、消息提示 14px，用同一套实心图标；弹窗关闭用 Close 16px（Element 的关闭图标比按钮中心高 2px，照画）；下拉框箭头用 ArrowDown 14px、占位文字色 */
+.result .ic { font-size:0; color:transparent; -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; }
+.result .ic > * { display:none; }
+.result .ic.warn { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E"); }
+.result .ic.err { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); }
+.result .ic.info { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896.064A448%20448%200%200%201%20512%2064m67.2%20275.072c33.28%200%2060.288-23.104%2060.288-57.344s-27.072-57.344-60.288-57.344c-33.28%200-60.16%2023.104-60.16%2057.344s26.88%2057.344%2060.16%2057.344M590.912%20699.2c0-6.848%202.368-24.64%201.024-34.752l-52.608%2060.544c-10.88%2011.456-24.512%2019.392-30.912%2017.28a12.99%2012.99%200%200%201-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096%200-108.992%2044.736-148.48%20101.504%200%206.784-1.28%2023.68.064%2033.792l52.544-60.608c10.88-11.328%2023.552-19.328%2029.952-17.152a12.8%2012.8%200%200%201%207.808%2016.128L388.48%20728.576c-10.048%2032.256%208.96%2063.872%2055.04%2071.04%2067.84%200%20107.904-43.648%20147.456-100.416z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896.064A448%20448%200%200%201%20512%2064m67.2%20275.072c33.28%200%2060.288-23.104%2060.288-57.344s-27.072-57.344-60.288-57.344c-33.28%200-60.16%2023.104-60.16%2057.344s26.88%2057.344%2060.16%2057.344M590.912%20699.2c0-6.848%202.368-24.64%201.024-34.752l-52.608%2060.544c-10.88%2011.456-24.512%2019.392-30.912%2017.28a12.99%2012.99%200%200%201-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096%200-108.992%2044.736-148.48%20101.504%200%206.784-1.28%2023.68.064%2033.792l52.544-60.608c10.88-11.328%2023.552-19.328%2029.952-17.152a12.8%2012.8%200%200%201%207.808%2016.128L388.48%20728.576c-10.048%2032.256%208.96%2063.872%2055.04%2071.04%2067.84%200%20107.904-43.648%20147.456-100.416z%27%2F%3E%3C%2Fsvg%3E"); }
+.alert::before, .alert.warn::before, .alert.error::before, .alert.success::before { content:""; border-radius:0; -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896.064A448%20448%200%200%201%20512%2064m67.2%20275.072c33.28%200%2060.288-23.104%2060.288-57.344s-27.072-57.344-60.288-57.344c-33.28%200-60.16%2023.104-60.16%2057.344s26.88%2057.344%2060.16%2057.344M590.912%20699.2c0-6.848%202.368-24.64%201.024-34.752l-52.608%2060.544c-10.88%2011.456-24.512%2019.392-30.912%2017.28a12.99%2012.99%200%200%201-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096%200-108.992%2044.736-148.48%20101.504%200%206.784-1.28%2023.68.064%2033.792l52.544-60.608c10.88-11.328%2023.552-19.328%2029.952-17.152a12.8%2012.8%200%200%201%207.808%2016.128L388.48%20728.576c-10.048%2032.256%208.96%2063.872%2055.04%2071.04%2067.84%200%20107.904-43.648%20147.456-100.416z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896.064A448%20448%200%200%201%20512%2064m67.2%20275.072c33.28%200%2060.288-23.104%2060.288-57.344s-27.072-57.344-60.288-57.344c-33.28%200-60.16%2023.104-60.16%2057.344s26.88%2057.344%2060.16%2057.344M590.912%20699.2c0-6.848%202.368-24.64%201.024-34.752l-52.608%2060.544c-10.88%2011.456-24.512%2019.392-30.912%2017.28a12.99%2012.99%200%200%201-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096%200-108.992%2044.736-148.48%20101.504%200%206.784-1.28%2023.68.064%2033.792l52.544-60.608c10.88-11.328%2023.552-19.328%2029.952-17.152a12.8%2012.8%200%200%201%207.808%2016.128L388.48%20728.576c-10.048%2032.256%208.96%2063.872%2055.04%2071.04%2067.84%200%20107.904-43.648%20147.456-100.416z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; }
+.alert.warn::before { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E"); }
+.alert.error::before { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); }
+.alert.success::before { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E"); }
+.msg::before, .msg.error::before, .msg.success::before { content:""; border-radius:0; -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20192a58.43%2058.43%200%200%200-58.24%2063.744l23.36%20256.384a35.072%2035.072%200%200%200%2069.76%200l23.296-256.384A58.43%2058.43%200%200%200%20512%20256m0%20512a51.2%2051.2%200%201%200%200-102.4%2051.2%2051.2%200%200%200%200%20102.4%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; }
+.msg.error::before { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m0%20393.664L407.936%20353.6a38.4%2038.4%200%201%200-54.336%2054.336L457.664%20512%20353.6%20616.064a38.4%2038.4%200%201%200%2054.336%2054.336L512%20566.336%20616.064%20670.4a38.4%2038.4%200%201%200%2054.336-54.336L566.336%20512%20670.4%20407.936a38.4%2038.4%200%201%200-54.336-54.336z%27%2F%3E%3C%2Fsvg%3E"); }
+.msg.success::before { -webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E"); mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M512%2064a448%20448%200%201%201%200%20896%20448%20448%200%200%201%200-896m-55.808%20536.384-99.52-99.584a38.4%2038.4%200%201%200-54.336%2054.336l126.72%20126.72a38.27%2038.27%200%200%200%2054.336%200l262.4-262.464a38.4%2038.4%200%201%200-54.272-54.336z%27%2F%3E%3C%2Fsvg%3E"); }
+.modal::after { content:""; background:var(--info); -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M764.288%20214.592%20512%20466.88%20259.712%20214.592a31.936%2031.936%200%200%200-45.12%2045.12L466.752%20512%20214.528%20764.224a31.936%2031.936%200%201%200%2045.12%2045.184L512%20557.184l252.288%20252.288a31.936%2031.936%200%200%200%2045.12-45.12L557.12%20512.064l252.288-252.352a31.936%2031.936%200%201%200-45.12-45.184z%27%2F%3E%3C%2Fsvg%3E") center calc(50% - 2px)/16px no-repeat; mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M764.288%20214.592%20512%20466.88%20259.712%20214.592a31.936%2031.936%200%200%200-45.12%2045.12L466.752%20512%20214.528%20764.224a31.936%2031.936%200%201%200%2045.12%2045.184L512%20557.184l252.288%20252.288a31.936%2031.936%200%200%200%2045.12-45.12L557.12%20512.064l252.288-252.352a31.936%2031.936%200%201%200-45.12-45.184z%27%2F%3E%3C%2Fsvg%3E") center calc(50% - 2px)/16px no-repeat; }
+.sel::after { content:""; width:14px; height:14px; background:var(--text-dis); -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M831.872%20340.864%20512%20652.672%20192.128%20340.864a30.59%2030.59%200%200%200-42.752%200%2029.12%2029.12%200%200%200%200%2041.6L489.664%20714.24a32%2032%200%200%200%2044.672%200l340.288-331.712a29.12%2029.12%200%200%200%200-41.728%2030.59%2030.59%200%200%200-42.752%200z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201024%201024%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M831.872%20340.864%20512%20652.672%20192.128%20340.864a30.59%2030.59%200%200%200-42.752%200%2029.12%2029.12%200%200%200%200%2041.6L489.664%20714.24a32%2032%200%200%200%2044.672%200l340.288-331.712a29.12%2029.12%200%200%200%200-41.728%2030.59%2030.59%200%200%200-42.752%200z%27%2F%3E%3C%2Fsvg%3E") center/contain no-repeat; }
+/* 分页总数、禁用的翻页按钮：对应 layout="total, prev, pager, next"。「共 N 条」常规文字色、距按钮 16px；第一页时上一页按钮用浅填充色、占位文字色 */
+.pager .total { margin-right:8px; color:var(--text2); }
+.pager .pg.dis { background:var(--fill); color:var(--text-dis); }
+/* 描述列表：对应 el-descriptions :column="1"（不带边框）。标签主要文字色、距内容 16px；内容常规文字色；每行 36px。
+   样式包让各行内容对齐成一列（标签列宽 96px），Element 默认按各自标签宽度排，标签长短不一时要给标签定宽 */
+.desc { column-gap:16px; row-gap:0; }
+.desc dt { padding:1px 0 12px 1px; line-height:23px; color:var(--text); } .desc dd { padding:1px 1px 12px 0; line-height:23px; color:var(--text2); }

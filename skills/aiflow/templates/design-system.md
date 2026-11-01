@@ -36,6 +36,11 @@
 | 小圆角 | `--radius-sm` | 按默认 | 默认 4px，小按钮、标签、骨架屏 |
 | 复选框圆角 | `--radius-checkbox` | 按默认 | 默认同小圆角 |
 | 信息色 | `--info` | 按默认 | 没有类型的标签；改了会派生浅色背景、描边、文字 |
+| 规范字号（检查用） | `--check-font-sizes` | 按默认 | spec-check.js 允许的字号，空格分隔；默认 12 14 16 20 24 30 38 |
+| 规范圆角（检查用） | `--check-radii` | 按默认 | 默认 2 4 6 8；圆形、胶囊形不查 |
+| 按钮高度（检查用） | `--check-btn-heights` | 按默认 | 默认 24 32 40 |
+| 输入框高度（检查用） | `--check-input-heights` | 按默认 | 默认 24 32 40 |
+| 标签高度（检查用） | `--check-tag-heights` | 按默认 | 默认 22 |
 
 > 改了主色、成功、警告、错误色，浅色背景、描边和深色文字会自动派生（近似值）。要用规范给的值，就在表里加 `--primary-bg`、`--primary-bd`、`--primary-text` 这样的行。
 > 表里只列了常用的令牌。样式包支持的全部变量见 `prototype-kit/_src/kit.css` 的 `:root`，规范里有对应值的都可以加行；常见组件库的变量怎么对应，见 aiflow `references/design-system.md` 第四节。

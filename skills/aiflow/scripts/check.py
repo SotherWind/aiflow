@@ -564,6 +564,28 @@ def check_design(text, af, prototype_pages):
     return pages, checkpoints
 
 
+def check_design_selfcheck(text):
+    """设计稿自检：交用户确认前做完。走查只拿实现和设计稿比，设计稿本身错了查不出来。"""
+    body = section(text, "设计稿自检")
+    if not body:
+        block("%s 缺少「设计稿自检」小节：交用户确认前要做规范检查、版式检查、组件库对照和独立评审" % DESIGN)
+        return
+    for name in ("规范检查", "版式检查", "组件库对照", "独立评审"):
+        if missing_value(release_field(body, name)):
+            block("%s 设计稿自检缺少「%s」的结果" % (DESIGN, name))
+    if not release_field(body, "结论").startswith("通过"):
+        block("%s 设计稿自检结论不是「通过」：%s" % (DESIGN, release_field(body, "结论") or "空"))
+    header, rows = first_table(body)
+    for row in rows:
+        data = row_dict(header, row)
+        identifier = data.get("编号", row[0] if row else "")
+        status = clean_md(data.get("状态", ""))
+        if status not in ("已修改", "不改"):
+            block("设计稿自检问题未处理完：%s=%s" % (identifier, status or "空"))
+        elif missing_value(data.get("处理", "")):
+            block("设计稿自检问题没有写处理：%s" % identifier)
+
+
 def walkthrough_final(text, checkpoints):
     """读走查记录：每个走查点取最近一轮的结果。"""
     header, rows = first_table(section(text, "走查记录"))
@@ -876,6 +898,7 @@ def main():
             prototype_pages = check_prototype(texts[PROTOTYPE], af, ids_a)
     if stage >= 3 and state.get("design_required") is True and DESIGN in texts:
         design_pages, checkpoints = check_design(texts[DESIGN], af, prototype_pages)
+        check_design_selfcheck(texts[DESIGN])
     if stage >= 7:
         walkthrough = state.get("walkthrough_result")
         if state.get("design_required") is False and walkthrough != "skipped":

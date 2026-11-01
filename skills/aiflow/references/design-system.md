@@ -38,7 +38,7 @@
 3. `.aiflow/design-system.md` 令牌表里「取值」不是「按默认」的行，覆盖同名的 CSS 变量。改了主色、成功、警告、错误、信息色时，浅色背景、描边和文字色自动派生；派生比例按预设，没有预设时按 Ant Design
 4. `_src/theme.css`（如果有）：令牌表和预设都表达不了的差异写在这里
 
-构建时会列出覆盖了哪些令牌；令牌名写错、样式包里没有的，也会提示。
+构建时会列出覆盖了哪些令牌；令牌名写错、样式包里没有的，也会提示。拼好的完整样式另存为 `_built.css`，组件库对照时用。
 
 ### 常见组件库的变量怎么对应
 
@@ -59,6 +59,8 @@
 | `--info` / `--info-bg` / `--info-bd` | `--el-color-info` / `-light-9` / `-light-8` | 无对应，没有类型的标签用中性色 |
 | `--font` / `--font-size` | `--el-font-family` / `--el-font-size-base` | `fontFamily` / `fontSize` |
 | `--header-h` | `--el-header-height` | `Layout.headerHeight` |
+| `--mask-bg` | `--el-overlay-color-lighter` | `colorBgMask` |
+| `--avatar-bg` | `--el-avatar-bg-color` | `colorTextPlaceholder` |
 
 > `--radius-sm` 是样式包里小按钮、标签、骨架屏的圆角。Element Plus 的这些组件用基础圆角，只有复选框用小圆角，所以 `--el-border-radius-small` 对到 `--radius-checkbox`，不要对到 `--radius-sm`，否则按钮和标签会变成 2px。
 
@@ -68,9 +70,9 @@
 
 | 预设 | 适用 | 包含 |
 |---|---|---|
-| `element-plus` | 基于 Element Plus 2.x 的规范 | 默认色板与派生比例（浅 9 背景、浅 8 描边、文字用类型色）、白色顶栏、菜单下划线、卡片描边无阴影、表头白底、标签尺寸、无描边提示条、消息提示、带背景分页、实心时间轴、弹窗与浮层阴影、朴素危险按钮、圆角 |
+| `element-plus` | 基于 Element Plus 2.x 的规范 | Element Plus 默认色板与派生比例，以及按钮、输入框、表单、表格、页签、分页、卡片、弹窗、提示条、消息提示、步骤条、时间轴、结果、空状态、描述列表、面包屑等组件的默认尺寸和样式；图标用 Element Plus 图标库。和 element-plus 2.14.7 逐项对照过（70 项一致，2026-11-01） |
 
-用了预设，令牌表只需要写和预设默认值不同的项（例如改了主色）。预设之外还对不上的差异，写进 `_src/theme.css`。要支持新的组件库，照 `presets/element-plus.css` 加一个文件。
+用了预设，令牌表只需要写和预设默认值不同的项（例如改了主色）。预设只放组件库默认的样子；规范和组件库默认不一样的地方写进 `_src/theme.css`，并列进 `03-design.md`「实现时要改组件库默认值的地方」。要支持新的组件库，照 `presets/element-plus.css` 加一个文件，并按下面「样式包和组件库对照」对照到差异为空。
 
 ### 状态标签用语义类
 
@@ -79,6 +81,30 @@
 页面里不要用行内 `style` 写死颜色：行内颜色不走变量，换规范时不会跟着变。构建时会提示哪些页面写死了颜色。
 
 规范和 Ant Design 的风格差得很远（例如移动端、大屏）时，不硬套样式包：用规范自带的组件库在墨刀或 Figma 里画原型，页面编号和说明仍然写在 `02-prototype.md`。
+
+### 规范检查的取值范围
+
+`spec-check.js` 从页面的 `:root` 读允许的取值：颜色是 `:root` 里的全部颜色变量，字号、圆角、控件高度是 `--check-font-sizes`、`--check-radii`、`--check-btn-heights`、`--check-input-heights`、`--check-tag-heights`，字体是 `--font`。样式包和预设给了默认范围；规范定得更细时（例如只允许 12、13、14、16、18、20px），在 design-system.md 令牌表加这几行覆盖。阴影和间距不查，靠走查点和评审。
+
+### 样式包和组件库对照
+
+样式包是照组件库仿出来的。仿错一处，所有原型和设计稿都跟着错，前端用真组件库实现时处处对不上。对照工具在 `scripts/parity/`：`kit.html` 用样式包画出常用组件，`element-plus.html` 用真实的 Element Plus（CDN）渲染同样的组件，`parity.js` 逐个比较高、宽、圆角、背景、边框、阴影、字号、字重、颜色、行高、文字位置和间距。
+
+用法：在 skill 目录起一个 http 服务（例如 `python -m http.server 8766`），用浏览器工具：
+
+1. 打开 `scripts/parity/kit.html?preset=element-plus`，等 `window.__ready` 为 true，注入 `parity.js`，`A = aiflowParityMeasure('kit')`
+2. 打开 `scripts/parity/element-plus.html`，等 `window.__ready` 为 true，注入 `parity.js`，`B = aiflowParityMeasure('element-plus')`
+3. `aiflowParityCompare(A, B)` 返回差异列表
+
+| 比的是 | 地址 | 差异应该是 | 有差异时 |
+|---|---|---|---|
+| 样式预设 | `kit.html?preset=element-plus` | 空 | 改预设，直到为空；更新预设开头的对照版本和日期 |
+| 项目设计稿 | `kit.html?css=<设计稿 _built.css 的地址>` | 只剩规范要求的 | 每条要么改设计稿，要么写进 `03-design.md`「实现时要改组件库默认值的地方」并写明依据 |
+
+- 规范没写、组件库有默认值的，按组件库默认，不要自己定一个数。
+- 组件库自己的现象不算问题。例如 Element Plus 弹窗的关闭图标比按钮中心高 2px，`layout-check.js` 在真实组件上也会报；设计稿照画，走查时也不算前端的问题。
+- 两边在同一个浏览器、同一个缩放下量。系统缩放 125%、150% 时 1px 边框会画成 0.8px、0.67px，脚本已经按整像素补回。
+- 不用预设（Ant Design 默认样式）时，目前没有对照页面：`03-design.md` 的「组件库对照」写「未对照」，评审时告诉用户。
 
 ## 五、对下游的影响
 
@@ -91,4 +117,4 @@
 
 ## 六、门禁
 
-需要原型或设计稿的项目，阶段 2 起 `.aiflow/design-system.md` 必须存在，「来源」必须填写。`check.py` 会查。
+需要原型或设计稿的项目，阶段 2 起 `.aiflow/design-system.md` 必须存在，「来源」必须填写。需要设计稿的项目，阶段 3 起 `03-design.md` 必须有结论为「通过」的「设计稿自检」，查出的问题都已处理。`check.py` 都会查。

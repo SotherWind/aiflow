@@ -1,0 +1,70 @@
+<!doctype html>
+<!-- 组件对照的组件库一侧：用真实的 Element Plus 2.x（CDN）渲染和 kit.html 相同的组件。
+     页面字体、字号、行高和样式包一致（正文 14px、行高 1.5715），只比较组件自己的样式。用法见 references/design-system.md「样式包和组件库对照」。 -->
+<html lang="zh-CN"><head><meta charset="utf-8"><title>组件对照 · Element Plus</title>
+<link rel="stylesheet" href="https://unpkg.com/element-plus@2/dist/index.css">
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus@2/dist/index.full.min.js"></script>
+<style>
+  body { margin:0; background:var(--el-bg-color-page); font-family:var(--el-font-family); font-size:var(--el-font-size-base); line-height:1.5715; color:var(--el-text-color-primary); }
+  .pairs { display:grid; grid-template-columns:repeat(3, 340px); gap:16px; padding:20px; }
+  .pair { position:relative; padding:12px; background:var(--el-bg-color); }
+  .pair.wide { grid-column:span 3; }
+</style></head>
+<body><div id="app"></div>
+<script>
+  var template = [
+    '<div class="pairs">',
+    '<div class="pair" data-pair="btn"><el-button>取消</el-button></div>',
+    '<div class="pair" data-pair="btn-pri"><el-button type="primary">提交</el-button></div>',
+    '<div class="pair" data-pair="btn-lg"><el-button type="primary" size="large">提交</el-button></div>',
+    '<div class="pair" data-pair="btn-sm"><el-button size="small">查看</el-button></div>',
+    '<div class="pair" data-pair="btn-danger"><el-button type="danger" plain>驳回</el-button></div>',
+    '<div class="pair" data-pair="btn-link"><el-button type="primary" link>查看</el-button></div>',
+    '<div class="pair" data-pair="input"><el-input placeholder="请输入标题"></el-input></div>',
+    '<div class="pair" data-pair="input-lg"><el-input size="large" placeholder="请输入账号"></el-input></div>',
+    '<div class="pair" data-pair="textarea"><el-input type="textarea" :rows="4" placeholder="请描述问题"></el-input></div>',
+    '<div class="pair" data-pair="select"><el-select v-model="status" placeholder="全部状态"><el-option label="待受理" value="1"></el-option></el-select></div>',
+    '<div class="pair" data-pair="label"><el-form label-position="top"><el-form-item label="标题" required><el-input placeholder="请输入标题"></el-input></el-form-item></el-form></div>',
+    '<div class="pair" data-pair="ferr"><el-form label-position="top"><el-form-item error="请填写标题"><el-input></el-input></el-form-item></el-form></div>',
+    '<div class="pair" data-pair="tag"><el-tag type="warning">待受理</el-tag></div>',
+    '<div class="pair" data-pair="tag-info"><el-tag type="info">已关闭</el-tag></div>',
+    '<div class="pair" data-pair="badge"><span>站内信</span> <el-badge :value="3"></el-badge></div>',
+    '<div class="pair" data-pair="avatar"><el-avatar :size="28">张</el-avatar></div>',
+    '<div class="pair" data-pair="alert"><el-alert title="客服已处理完成，请确认问题是否解决。" type="primary" show-icon :closable="false"></el-alert></div>',
+    '<div class="pair" data-pair="msg" style="height:40px"></div>',
+    '<div class="pair" data-pair="pager"><el-pagination background layout="pager" :total="20" :page-size="10"></el-pagination></div>',
+    '<div class="pair" data-pair="timeline"><el-timeline><el-timeline-item type="primary" timestamp="2026-11-01 10:00">客服受理了工单</el-timeline-item><el-timeline-item type="success" timestamp="2026-11-01 11:20">客服处理完成</el-timeline-item></el-timeline></div>',
+    '<div class="pair" data-pair="result"><el-result icon="success" title="提交成功" sub-title="已为你生成工单"></el-result></div>',
+    '<div class="pair wide" data-pair="card"><el-card shadow="never"><template #header>处理记录</template>卡片内容</el-card></div>',
+    '<div class="pair wide" data-pair="table"><el-table :data="rows"><el-table-column prop="no" label="工单号"></el-table-column><el-table-column prop="title" label="标题"></el-table-column></el-table></div>',
+    '<div class="pair wide" data-pair="dialog" style="height:240px"><el-dialog v-model="open" title="驳回处理结果" width="520px" :modal="false" :lock-scroll="false">请写明哪里还没解决<template #footer><el-button>取消</el-button><el-button type="primary">提交驳回</el-button></template></el-dialog></div>',
+    '<div class="pair" data-pair="btn-dis"><el-button disabled>驳回</el-button></div>',
+    '<div class="pair" data-pair="btn-gap"><el-button type="primary">受理</el-button><el-button>转交</el-button></div>',
+    '<div class="pair" data-pair="input-focus"><div class="el-input"><div class="el-input__wrapper is-focus"><input class="el-input__inner" value="打印机无法连接"></div></div></div>',
+    '<div class="pair" data-pair="chk"><el-checkbox>只看已升级</el-checkbox></div>',
+    '<div class="pair" data-pair="crumb"><el-breadcrumb separator="/"><el-breadcrumb-item>工单</el-breadcrumb-item><el-breadcrumb-item>工单列表</el-breadcrumb-item></el-breadcrumb></div>',
+    '<div class="pair" data-pair="crumb-link"><el-breadcrumb separator="/"><el-breadcrumb-item :to="{ path: \'/\' }">工单</el-breadcrumb-item><el-breadcrumb-item>T-20261031-0021</el-breadcrumb-item></el-breadcrumb></div>',
+    '<div class="pair" data-pair="desc"><el-descriptions :column="1"><el-descriptions-item label="电话">138 0013 8000</el-descriptions-item><el-descriptions-item label="邮箱">li.ming@example.com</el-descriptions-item></el-descriptions></div>',
+    '<div class="pair" data-pair="empty"><el-empty description="暂无工单"></el-empty></div>',
+    '<div class="pair" data-pair="skel"><el-skeleton :rows="1"></el-skeleton></div>',
+    '<div class="pair wide" data-pair="menu"><el-menu mode="horizontal" default-active="1" :ellipsis="false"><el-menu-item index="1">工单</el-menu-item><el-menu-item index="2">统计</el-menu-item></el-menu></div>',
+    '<div class="pair wide" data-pair="tabs"><el-tabs model-value="a"><el-tab-pane label="待受理 12" name="a"></el-tab-pane><el-tab-pane label="我的处理中 3" name="b"></el-tab-pane></el-tabs></div>',
+    '<div class="pair wide" data-pair="steps"><el-steps :active="2"><el-step title="已提交"></el-step><el-step title="处理中"></el-step><el-step title="待你确认"></el-step><el-step title="已关闭"></el-step></el-steps></div>',
+    '<div class="pair wide" data-pair="pop" style="height:160px"><el-popover :visible="true" placement="bottom-start" :width="360" title="站内信 · 未读 2" content="工单 T-20261101-0012 已超时"><template #reference><span>站内信</span></template></el-popover></div>',
+    '</div>'
+  ].join('');
+  var app = Vue.createApp({
+    template: template,
+    data: function () { return { status: '', open: true, rows: [{ no: 'T-20261101-0012', title: '打印机无法连接' }] }; },
+    mounted: function () {
+      ElementPlus.ElMessage({ message: '工单状态已变化，请刷新后再操作', type: 'warning', duration: 0 });
+      // 等弹窗和消息的进场动画结束再量
+      setTimeout(function () { window.__ready = true; }, 800);
+    }
+  });
+  window.__app = app.use(ElementPlus).mount('#app');
+  window.__libName = 'element-plus';
+  window.__lib = 'element-plus ' + ElementPlus.version;
+  document.title += ' ' + ElementPlus.version;
+</script></body></html>

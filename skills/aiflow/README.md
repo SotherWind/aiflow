@@ -95,9 +95,10 @@ references/
   change.md           需求变更的传播规则
 experts/              八个角色，各含「做什么 / 自检 / 常见失败 / 提问边界」
   analyst pm ux architect fe be tester operator
-templates/            十七份初始文件 + 原型样式包 prototype-kit（含 state 和问题台账；架构方案没有模板，由 PRD 推导）
+templates/            十七份初始文件（含 state 和问题台账；架构方案没有模板，由 PRD 推导）+ 原型样式包 prototype-kit（含 layout-check.js 版式检查、spec-check.js 规范检查）
 scripts/
   check.py            漂移检查：漏 / 编 / 确认 / 状态一致 / 门禁
+  parity/             样式包和真实组件库对照（kit.html、element-plus.html、parity.js）
 tests/
   test_check.py       正常放行与假绿反例回归测试
 ```

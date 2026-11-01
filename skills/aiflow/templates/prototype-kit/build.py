@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """aiflow 原型图构建：把 _src/ 下页面里的 kit.css 引用替换成内联样式，输出到本目录。
+拼好的完整样式另存为 _built.css，做「样式包和组件库对照」时给 scripts/parity/kit.html 用（?css=地址）。
 样式按顺序拼接：_src/kit.css → 样式预设 _src/presets/<名>.css（design-system.md 写了「样式预设」时）
 → ../design-system.md 令牌表的覆盖 → _src/theme.css（如果有）。后面的覆盖前面的。
 生成的页面不依赖任何外部文件，任何查看器打开都一样。以 _ 开头的文件（如 _template.html）不输出。
@@ -123,6 +124,7 @@ if theme.exists():
     css += "\n/* 来自 _src/theme.css */\n" + theme.read_text(encoding="utf-8")
     print("追加了 _src/theme.css")
 
+(HERE / "_built.css").write_text(css, encoding="utf-8", newline="\n")
 for page in sorted(SRC.glob("*.html")):
     if page.name.startswith("_"):
         continue
@@ -131,6 +133,11 @@ for page in sorted(SRC.glob("*.html")):
     inline = re.findall(r'style="[^"]*(?:#[0-9a-fA-F]{3,8}\b|rgba?\()', text)
     if inline:
         print("提示：%s 有 %d 处行内样式写死了颜色，换设计规范时不会跟着变；改用 kit.css 的变量或类" % (page.name, len(inline)))
+    sizes = re.findall(r'style="[^"]*font-size:\s*\d', text)
+    if sizes:
+        print("提示：%s 有 %d 处行内样式改了字号，前端用组件库默认值时会和设计稿对不上；改用 kit.css 的类，确实要改就写进 03-design.md「实现时要改组件库默认值的地方」" % (page.name, len(sizes)))
     (HERE / page.name).write_text(text.replace(TAG, "<style>\n" + css + "</style>"), encoding="utf-8", newline="\n")
     print("built", page.name)
-print("交付前在浏览器里对每个页面运行 layout-check.js：注入后执行 aiflowLayoutCheck()，输出为空才算通过")
+print("交付前在浏览器里对每个页面运行 layout-check.js 和 spec-check.js：注入后执行 aiflowLayoutCheck()、aiflowSpecCheck()，输出都为空才算通过")
+if preset:
+    print("用了样式预设 %s：按 references/design-system.md「样式包和组件库对照」，用 _built.css 和真实组件库比一次，差异列进 03-design.md" % preset)

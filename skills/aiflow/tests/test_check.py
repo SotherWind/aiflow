@@ -122,6 +122,19 @@ PROTOTYPE = """> 依据 facts v1 生成
 - 字段：编号、状态
 """ + CONFIRM
 
+SELFCHECK = """
+## 五、设计稿自检
+- 规范检查：P1 运行 spec-check.js，输出为空
+- 版式检查：P1 运行 layout-check.js，输出为空
+- 组件库对照：没有用样式预设，没有对照页面，未对照
+- 独立评审：另一个会话评审，问题列在下表
+- 结论：通过
+
+| 编号 | 来源 | 位置 | 问题 | 处理 | 状态 |
+|---|---|---|---|---|---|
+| Z1 | 独立评审 | P1 | 空状态缺插图 | 已补 | 已修改 |
+"""
+
 DESIGN = """> 依据 facts v1 生成
 
 ## 一、页面与设计稿
@@ -139,7 +152,7 @@ DESIGN = """> 依据 facts v1 生成
 |---|---|---|---|---|
 | W1 | P1 | 页面 | 从主流程能到达本页 | 是 |
 | W2 | P1 | 交互 | I1 按标注实现 | 是 |
-""" + "".join("| W%d | P1 | 间距 | 要求 %d | 否 |\n" % (n, n) for n in range(3, 11)) + CONFIRM
+""" + "".join("| W%d | P1 | 间距 | 要求 %d | 否 |\n" % (n, n) for n in range(3, 11)) + SELFCHECK + CONFIRM
 
 
 def walkthrough_doc(results, score, conclusion, issues=""):
@@ -628,6 +641,31 @@ class CheckTests(unittest.TestCase):
         result = self.run_check()
         self.assert_blocked(result, "设计稿未覆盖原型页面：P2")
         self.assertIn("页面没有落到任何 FE 任务：P2", result.stdout)
+
+    def test_design_without_selfcheck_is_blocked(self):
+        self.make_full()
+        self.write_art("03-design.md", DESIGN.replace(SELFCHECK, ""))
+        self.assert_blocked(self.run_check(), "缺少「设计稿自检」小节")
+
+    def test_design_selfcheck_needs_independent_review(self):
+        self.make_full()
+        self.replace_art("03-design.md", "- 独立评审：另一个会话评审，问题列在下表", "- 独立评审：<待评审>")
+        self.assert_blocked(self.run_check(), "设计稿自检缺少「独立评审」的结果")
+
+    def test_design_selfcheck_conclusion_must_pass(self):
+        self.make_full()
+        self.replace_art("03-design.md", "- 结论：通过\n", "- 结论：<待独立评审后填写>\n")
+        self.assert_blocked(self.run_check(), "设计稿自检结论不是「通过」")
+
+    def test_design_selfcheck_open_issue_is_blocked(self):
+        self.make_full()
+        self.replace_art("03-design.md", "| Z1 | 独立评审 | P1 | 空状态缺插图 | 已补 | 已修改 |", "| Z1 | 独立评审 | P1 | 空状态缺插图 | | 待修改 |")
+        self.assert_blocked(self.run_check(), "设计稿自检问题未处理完：Z1=待修改")
+
+    def test_design_selfcheck_not_fixed_needs_reason(self):
+        self.make_full()
+        self.replace_art("03-design.md", "| Z1 | 独立评审 | P1 | 空状态缺插图 | 已补 | 已修改 |", "| Z1 | 独立评审 | P1 | 空状态缺插图 | | 不改 |")
+        self.assert_blocked(self.run_check(), "设计稿自检问题没有写处理：Z1")
 
     def write_walkthrough(self, results, score, conclusion, issues=()):
         rows = "".join(row for row, _ in issues) + "".join(detail for _, detail in issues)
