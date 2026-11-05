@@ -22,3 +22,8 @@ __pycache__/
 _built.css
 .DS_Store
 Thumbs.db
+
+# 可选浏览器维护测试的本地依赖与输出
+/skills/aiflow/tests/browser/node_modules/
+/skills/aiflow/tests/browser/test-results/
+/skills/aiflow/tests/browser/playwright-report/

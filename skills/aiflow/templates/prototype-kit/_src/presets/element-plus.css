@@ -50,9 +50,9 @@
 .tag { padding:0 9px; line-height:22px; }
 /* 徽标：对应 el-badge（不包内容时行内显示）。高 18px、左右 6px、白色 1px 描边、胶囊形 */
 .badge { box-sizing:content-box; min-width:0; height:18px; padding:0 6px; border:1px solid var(--surface); border-radius:10px; line-height:18px; }
-/* 按钮：对应 el-button。字重 500、没有投影，默认按钮用常规文字色；大号左右 19px、字号不变；小号左右 11px、12px 字、圆角 3px；
+/* 按钮：对应 el-button。行内垂直居中，避免加载图标改变表格行的基线高度；字重 500、没有投影，默认按钮用常规文字色；大号左右 19px、字号不变；小号左右 11px、12px 字、圆角 3px；
    文字按钮（link）高度随文字；禁用按钮白底浅边框。危险操作的触发按钮用 type="danger" plain，确认用 type="danger" */
-.btn { color:var(--text2); font-weight:500; box-shadow:none; } .btn.pri { box-shadow:none; }
+.btn { vertical-align:middle; color:var(--text2); font-weight:500; box-shadow:none; } .btn.pri { box-shadow:none; }
 .btn.lg { padding:0 19px; font-size:var(--font-size); } .btn.sm { padding:0 11px; font-size:12px; border-radius:3px; }
 .btn.link { height:auto; padding:2px; line-height:1; border:1px solid transparent; }
 .btn.dis { background:var(--surface); border-color:var(--border-light); color:var(--text-dis); }

@@ -5,10 +5,12 @@
 用法：python check.py <项目目录>
 退出码：0 通过 / 1 有阻塞项 / 2 只有警告。阶段收尾只接受 0。
 """
+import hashlib
 import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 BLOCK, WARN = [], []
@@ -193,10 +195,76 @@ def required_artifacts(stage, state):
     return result
 
 
-def section(text, heading_keyword):
-    headings = list(re.finditer(r"^##\s+.*$", text, re.M))
+def check_invalidated_artifacts(state, texts, stage):
+    raw = state.get("invalidated_artifacts", [])
+    if not isinstance(raw, list):
+        block("state.invalidated_artifacts 必须是列表")
+        return set()
+    known = {name for names in PHASE_ARTIFACTS.values() for name in names} | set(CONDITIONAL_ARTIFACTS)
+    invalidated = set()
+    for name in raw:
+        if not isinstance(name, str) or name not in known:
+            block("state.invalidated_artifacts 含非法产物名：%r" % name)
+        elif name in invalidated:
+            block("state.invalidated_artifacts 重复登记：%s" % name)
+        else:
+            invalidated.add(name)
+    required = set(required_artifacts(stage, state))
+    for name in sorted(invalidated - required):
+        if int(name[:2]) <= stage:
+            block("失效产物尚未处置：%s；不再需要时先归档并记录结论" % name)
+    signoffs = state.get("signoffs", {})
+    if isinstance(signoffs, dict):
+        for name, key in ((INTAKE, "scope"), (RESEARCH, "requirement"), (PRD, "prd"),
+                          (PROTOTYPE, "prototype"), (DESIGN, "design")):
+            if name in invalidated and signoffs.get(key) == "confirmed":
+                block("失效产物仍保留用户确认：%s；须重新评审" % name)
+    if {TASKS, DEVLOG} & invalidated and state.get("task_status", {}) != {}:
+        block("失效开发产物仍保留任务状态；先清空 task_status，重验后再登记")
+    if TESTREPORT in invalidated and state.get("acceptance_results", {}) != {}:
+        block("失效测试报告仍保留验收结果；先清空 acceptance_results")
+    if WALKTHROUGH in invalidated:
+        expected = "skipped" if state.get("design_required") is False else "not_run"
+        if state.get("walkthrough_result", expected) != expected:
+            block("失效走查仍保留执行结果；须重新走查")
+    if REGRESSION in invalidated and (
+            state.get("regression_result", "not_run") != "not_run"
+            or state.get("regression_conditions", []) != []
+            or state.get("regression_user_confirmed", False) is not False):
+        block("失效回归仍保留放行状态；清空旧条件与确认，重新回归")
+    if RELEASE in invalidated and state.get("release_status", "planned") != "planned":
+        block("失效发布仍保留上线状态；新一轮 release_status 应为 planned，历史另存")
+    if {TESTREPORT, REGRESSION} & invalidated and (
+            state.get("final_review_result", "not_run") != "not_run"
+            or state.get("final_review_evidence", "") != ""):
+        block("失效验收仍保留独立终验；须重新取得终验结果和证据")
+
+    # 旧任务编号可能已失效，只核对问题是否保留；重新进场前再迁移到当前任务与验收。
+    for name, heading, key, prefix, statuses, entry_stage in (
+            (BUGS, "汇总", "open_bugs", "BUG", OPEN_BUG_STATUSES, 8),
+            (WALKTHROUGH, "走查问题单", "open_ux_issues", "UX", UX_OPEN_STATUSES, 7)):
+        if name not in invalidated:
+            continue
+        carried = set(required_list(state, key))
+        header, rows = first_table(section(texts.get(name, ""), heading))
+        unresolved = set()
+        for row in rows:
+            data = row_dict(header, row)
+            identifier = data.get("编号", "")
+            if re.fullmatch(prefix + r"-\d+", identifier) and data.get("状态") in statuses:
+                unresolved.add(identifier)
+        if unresolved - carried:
+            block("失效问题单中的未关闭问题未保留在 state.%s：%s" % (key, ", ".join(sorted(unresolved - carried))))
+        if carried and stage >= entry_stage:
+            label = "失效缺陷单仍有未迁移的未关闭缺陷" if name == BUGS else "失效走查仍有未迁移的未关闭问题"
+            block("%s：%s" % (label, ", ".join(sorted(carried))))
+    return invalidated
+
+
+def section(text, heading_keyword, level=2):
+    headings = list(re.finditer(r"^#{1,%d}\s+.*$" % level, text, re.M))
     for index, heading in enumerate(headings):
-        if heading_keyword in heading.group(0):
+        if re.match(r"^#{%d}\s+" % level, heading.group(0)) and heading_keyword in heading.group(0):
             start = heading.end()
             end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
             return text[start:end]
@@ -311,11 +379,63 @@ def detail_section(text, identifier):
 
 
 def valid_closed_retest(text):
-    for line in text.splitlines():
-        normalized = clean_md(line).strip()
-        if re.search(r"结论\s*[:：]\s*通过(?:\s*→\s*已关闭)?\s*$", normalized):
-            return True
-    return False
+    conclusions = release_fields(section(text, "复测结论", level=4), "结论")
+    return len(conclusions) == 1 and conclusions[0] in ("通过", "通过 → 已关闭")
+
+
+def check_bug_retests(text, identifier, standards, case_acceptance, closed):
+    """按用例取最大轮次；历史通过不能掩盖后续失败，证据无效的行不参与更新状态。"""
+    for name in ("复测记录", "复测结论"):
+        if len(re.findall(r"^####\s+[^\n]*%s[^\n]*$" % name, text, re.M)) > 1:
+            block("缺陷存在重复的「%s」小节：%s" % (name, identifier))
+    header, rows = first_table(section(text, "复测记录", level=4))
+    if not rows:
+        if closed:
+            block("已关闭缺陷缺少复测记录：%s" % identifier)
+        return set()
+    if not {"轮次", "用例", "验收标准", "结果", "证据"} <= set(header):
+        block("缺陷复测记录缺少必要列：%s" % identifier)
+        return set()
+    latest, seen = {}, set()
+    for row in rows:
+        data = row_dict(header, row)
+        case_id, standard = data.get("用例", ""), data.get("验收标准", "")
+        round_text = data.get("轮次", "")
+        if not round_text.isdigit() or int(round_text) < 1:
+            block("复测轮次必须是正整数：%s → %s" % (identifier, round_text or "空"))
+            continue
+        number = int(round_text)
+        if (case_id, number) in seen:
+            block("同一轮重复复测同一用例：%s → %s 第 %d 轮" % (identifier, case_id, number))
+            continue
+        seen.add((case_id, number))
+        valid = True
+        if case_id not in case_acceptance:
+            block("复测引用了未定义的用例：%s → %s" % (identifier, case_id or "空"))
+            valid = False
+        elif standard not in case_acceptance[case_id]:
+            block("复测用例与验收标准的关联不一致：%s → %s/%s" % (identifier, case_id, standard))
+            valid = False
+        if standard not in standards:
+            block("复测标准不在缺陷的关联验收中：%s → %s" % (identifier, standard or "空"))
+            valid = False
+        result = data.get("结果", "")
+        if result not in ("通过", "不通过"):
+            block("复测结果必须是「通过」或「不通过」：%s → %s" % (identifier, case_id))
+            valid = False
+        if missing_value(data.get("证据", "")):
+            block("复测记录缺少证据：%s → %s" % (identifier, case_id))
+            valid = False
+        if valid and (case_id not in latest or number > latest[case_id][0]):
+            latest[case_id] = (number, result)
+    passed = {case_id for case_id, (_, result) in latest.items() if result == "通过"}
+    if closed:
+        for case_id in sort_ids(set(latest) - passed):
+            block("已关闭缺陷最近一轮复测未通过：%s → %s" % (identifier, case_id))
+        for standard in sort_ids(standards):
+            if not any(standard in case_acceptance[case_id] for case_id in passed):
+                block("已关闭缺陷复测未覆盖关联验收：%s → %s" % (identifier, standard))
+    return passed
 
 
 def regression_conclusion(text):
@@ -332,13 +452,19 @@ def regression_conclusion(text):
     return conclusions[0]
 
 
-def release_field(text, name):
+def release_fields(text, name):
+    values = []
     for line in text.splitlines():
         normalized = clean_md(line).lstrip("- ").strip()
         match = re.match(r"%s\s*[:：]\s*(.*?)\s*$" % re.escape(name), normalized)
         if match:
-            return match.group(1).strip()
-    return ""
+            values.append(match.group(1).strip())
+    return values
+
+
+def release_field(text, name):
+    values = release_fields(text, name)
+    return values[0] if values else ""
 
 
 def missing_value(value):
@@ -418,14 +544,16 @@ def check_signoff(signoffs, key, texts, name, label):
     check_review(texts[name], name)
 
 
-def check_questions(af, stage, pending_decisions):
+def check_questions(af, stage, pending_decisions, *, required=True):
     """问题台账：阶段收尾时不得有「待问 / 待答复」，解决的要有用户原话，并与 pending_decisions 一致。"""
     path = af / "questions.md"
     if not path.exists():
-        block("缺少 .aiflow/questions.md 问题台账；先按 templates/questions.md 初始化")
-        return
+        if required:
+            block("缺少 .aiflow/questions.md 问题台账；澄清收口后按真实对话整理归档")
+        return {}
     header, rows = first_table(section(rd(path), "台账"))
     seen, open_ids = set(), set()
+    questions = {}
     for row in rows:
         data = row_dict(header, row)
         identifier = data.get("编号", row[0] if row else "")
@@ -435,6 +563,7 @@ def check_questions(af, stage, pending_decisions):
             block("questions.md 重复问题编号：%s" % identifier)
             continue
         seen.add(identifier)
+        questions[identifier] = data
         status = clean_md(data.get("状态", ""))
         if status in QUESTION_OPEN:
             open_ids.add(identifier)
@@ -457,6 +586,136 @@ def check_questions(af, stage, pending_decisions):
     if declared != open_ids:
         block("pending_decisions 与 questions.md 不一致：state=%s；台账=%s" % (
             ", ".join(sort_ids(declared)) or "空", ", ".join(sort_ids(open_ids)) or "空"))
+    return questions
+
+
+def check_clarification(state, stage, questions):
+    """澄清是产物检查的前置条件；不能由文件存在或产物评审反推已完成访谈。"""
+    current_questions = any(
+        data.get("提出阶段") == str(stage) and clean_md(data.get("状态", "")) != "作废"
+        for data in questions.values()
+    )
+    unanswered = any(clean_md(data.get("状态", "")) in QUESTION_OPEN for data in questions.values())
+    if "clarification" not in state:
+        if stage <= 4 or current_questions or unanswered:
+            block("缺少澄清记录 state.clarification；先按追问协议收口，不要先补正式产物")
+            return False
+        return True
+    record = required_dict(state, "clarification")
+    recorded_stage = record.get("stage")
+    if (not isinstance(recorded_stage, int) or isinstance(recorded_stage, bool)
+            or not 0 <= recorded_stage <= stage):
+        block("state.clarification.stage 必须是已进入阶段的整数，不能引用未来阶段")
+        return False
+    status = record.get("status")
+    if status == "pending":
+        block("阶段 %d 澄清尚未收口；先查证、逐轮追问并确认共识，再生成正式产物" % recorded_stage)
+        return False
+    if status not in ("confirmed", "not_needed"):
+        block("state.clarification.status 必须为 pending / confirmed / not_needed")
+        return False
+    if (stage <= 4 or current_questions) and recorded_stage != stage:
+        block("澄清记录不属于当前阶段；更新 state.clarification，不能沿用上一阶段共识")
+        return False
+    valid = not unanswered
+    for key in ("summary", "user_quote") if status == "confirmed" else ("summary",):
+        value = record.get(key)
+        if not isinstance(value, str) or missing_value(value.strip()):
+            block("state.clarification.%s 缺少有效内容" % key)
+            valid = False
+    if status == "confirmed":
+        try:
+            timestamp = datetime.fromisoformat(record.get("confirmed_at", ""))
+            if timestamp.tzinfo is None:
+                raise ValueError("缺少时区")
+        except (ValueError, TypeError):
+            block("state.clarification.confirmed_at 必须记录含时区的真实共识确认时间")
+            valid = False
+    elif any(data.get("提出阶段") == str(recorded_stage) and clean_md(data.get("状态", "")) != "作废"
+             for data in questions.values()):
+        block("本阶段有澄清问题，须记录 confirmed 共识确认，不能用 not_needed 代替")
+        valid = False
+    return valid
+
+
+def check_agent_sessions(state, stage, task_types, repair_types=()):
+    """核对角色交接与身份隔离；会话 ID 本身不能证明子代理实际执行过。"""
+    mode = state.get("mode")
+    if mode not in (2, 3):
+        return
+    sessions = required_dict(state, "agent_sessions")
+    roles = ("analyst", "pm", "designer", "architect", "fe", "be", "tester", "operator", "design_reviewer")
+    identities = {}
+    for role in roles + ("developer", "final_reviewer"):
+        value = sessions.get(role)
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str) or missing_value(value.strip()):
+            block("agent_sessions.%s 必须是实际会话 ID，不能使用占位内容" % role)
+        else:
+            identities[role] = value.strip()
+
+    current_role = {0: "analyst", 1: "analyst", 2: "pm", 4: "architect", 5: "architect",
+                    8: "tester", 9: "tester", 10: "tester", 11: "operator"}.get(stage)
+    current_roles = {current_role} if current_role else set()
+    if stage == 3 and state.get("design_required") is True:
+        current_roles.update(("designer", "design_reviewer"))
+    if stage == 4:
+        current_roles.add("tester")
+    if stage == 7 and state.get("design_required") is True:
+        current_roles.add("designer")
+    work_types = set(task_types.values()) if stage == 6 else set(repair_types) if stage == 9 else set()
+    if "FE" in work_types:
+        current_roles.add("fe")
+    if work_types & {"BE", "JOB"}:
+        current_roles.add("be")
+    needed = set(current_roles)
+    if stage >= 3 and state.get("design_required") is True:
+        needed.add("designer")
+        if stage == 3:
+            needed.add("design_reviewer")
+    if stage >= 8:
+        needed.add("tester")
+    if stage >= 6:
+        kinds = set(task_types.values())
+        for role, applicable in (("fe", "FE" in kinds), ("be", bool(kinds & {"BE", "JOB"}))):
+            if applicable and role not in identities and "developer" not in identities:
+                needed.add(role)
+    for role in sorted(needed - identities.keys()):
+        block("模式 %d 缺少 agent_sessions.%s；记录本次实际执行角色的会话" % (mode, role))
+
+    if current_roles:
+        dispatch = required_dict(state, "stage_dispatch")
+        dispatch_stage = dispatch.get("stage")
+        if not isinstance(dispatch_stage, int) or isinstance(dispatch_stage, bool) or dispatch_stage != stage:
+            block("stage_dispatch.stage 必须对应当前阶段 %d；不能沿用上一阶段的派工记录" % stage)
+        for role in sorted(current_roles):
+            evidence = dispatch.get(role)
+            if not isinstance(evidence, str) or missing_value(evidence.strip()):
+                block("stage_dispatch.%s 缺少本阶段实际派发与完成回报证据" % role)
+            elif evidence.strip() in identities.values():
+                block("stage_dispatch.%s 不能只填会话 ID；须记录本阶段派发与完成回报证据" % role)
+
+    # developer 是旧项目的开发身份别名，可与 fe/be 对应，但不能成为验收角色。
+    for index, role in enumerate(roles):
+        if role not in identities:
+            continue
+        for other in roles[index + 1:]:
+            if identities.get(other) == identities[role]:
+                block("模式 %d 的 %s 与 %s 必须是独立身份" % (mode, role, other))
+        if role not in ("fe", "be") and identities.get("developer") == identities[role]:
+            block("模式 %d 的 %s 与 developer 必须是独立身份" % (mode, role))
+
+    if mode == 3 and stage >= 10:
+        reviewer = identities.get("final_reviewer", "")
+        if not re.match(r"^(human|model):\S+", reviewer):
+            block("模式 3 缺少独立终验 agent_sessions.final_reviewer（须为 human:<姓名> 或 model:<名称>）")
+        elif reviewer in {value for role, value in identities.items() if role != "final_reviewer"}:
+            block("模式 3 的 final_reviewer 必须独立于全部执行角色")
+        if state.get("final_review_result") != "pass":
+            block("模式 3 的独立终验尚未通过")
+        if missing_value(str(state.get("final_review_evidence") or "")):
+            block("模式 3 缺少 final_review_evidence")
 
 
 def check_delivery_form(prd_text, state):
@@ -524,7 +783,7 @@ def check_design(text, af, prototype_pages):
     for identifier in sort_ids(prototype_pages - pages):
         block("设计稿未覆盖原型页面：%s" % identifier)
     header, rows = first_table(section(text, "交互标注"))
-    interactions = set()
+    interactions = {}
     for row in rows:
         data = row_dict(header, row)
         identifier = data.get("编号", row[0] if row else "")
@@ -532,11 +791,16 @@ def check_design(text, af, prototype_pages):
             continue
         if identifier in interactions:
             block("%s 重复交互标注编号：%s" % (DESIGN, identifier))
-        interactions.add(identifier)
-        if data.get("页面", "") not in pages:
-            block("交互标注挂在未定义的页面上：%s → %s" % (identifier, data.get("页面", "") or "空"))
+            continue
+        page = data.get("页面", "")
+        interactions[identifier] = page
+        if page not in pages:
+            block("交互标注挂在未定义的页面上：%s → %s" % (identifier, page or "空"))
+        for column in ("触发", "响应与细节"):
+            if missing_value(data.get(column, "")):
+                block("交互标注缺少%s：%s" % (column, identifier))
     header, rows = first_table(section(text, "走查点"))
-    checkpoints, covered = {}, set()
+    checkpoints, covered, layout_pages = {}, set(), set()
     for row in rows:
         data = row_dict(header, row)
         identifier = data.get("走查点", row[0] if row else "")
@@ -548,18 +812,36 @@ def check_design(text, af, prototype_pages):
         key_item = clean_md(data.get("关键项", ""))
         if key_item not in ("是", "否"):
             block("走查点必须标明关键项「是 / 否」：%s" % identifier)
-        if missing_value(data.get("设计要求", "")):
+        requirement = data.get("设计要求", "")
+        if missing_value(requirement):
             block("走查点缺少设计要求：%s" % identifier)
-        if data.get("页面", "") not in pages:
-            block("走查点挂在未定义的页面上：%s → %s" % (identifier, data.get("页面", "") or "空"))
-        checkpoints[identifier] = {"page": data.get("页面", ""), "key": key_item == "是"}
-        covered.update(ids_in(" ".join(row), "I"))
+        page = data.get("页面", "")
+        if page not in pages:
+            block("走查点挂在未定义的页面上：%s → %s" % (identifier, page or "空"))
+        checkpoints[identifier] = {"page": page, "key": key_item == "是"}
+        if data.get("维度") == "版式":
+            layout_pages.add(page)
+            if key_item != "是":
+                block("通用版式走查点必须标为关键项：%s" % identifier)
+        refs = ids_in(requirement, "I")
+        if refs and key_item != "是":
+            block("交互走查点必须标为关键项：%s" % identifier)
+        for interaction in sort_ids(refs):
+            if interaction not in interactions:
+                block("走查点引用了未定义的交互标注：%s → %s" % (identifier, interaction))
+            elif interactions[interaction] != page:
+                block("走查点与交互标注页面不一致：%s(%s) → %s(%s)" % (
+                    identifier, page, interaction, interactions[interaction]))
+            else:
+                covered.add(interaction)
     if not checkpoints:
         block("%s 没有走查点清单，阶段 7 无法计算还原度" % DESIGN)
     for identifier in sort_ids(pages):
         if not any(item["page"] == identifier for item in checkpoints.values()):
             block("页面没有走查点：%s" % identifier)
-    for identifier in sort_ids(interactions - covered):
+        if identifier not in layout_pages:
+            block("页面没有通用版式走查点：%s" % identifier)
+    for identifier in sort_ids(set(interactions) - covered):
         block("交互标注没有被任何走查点覆盖：%s" % identifier)
     return pages, checkpoints
 
@@ -573,7 +855,7 @@ def check_design_selfcheck(text):
     for name in ("规范检查", "版式检查", "组件库对照", "独立评审"):
         if missing_value(release_field(body, name)):
             block("%s 设计稿自检缺少「%s」的结果" % (DESIGN, name))
-    if not release_field(body, "结论").startswith("通过"):
+    if release_field(body, "结论") != "通过":
         block("%s 设计稿自检结论不是「通过」：%s" % (DESIGN, release_field(body, "结论") or "空"))
     header, rows = first_table(body)
     for row in rows:
@@ -584,6 +866,172 @@ def check_design_selfcheck(text):
             block("设计稿自检问题未处理完：%s=%s" % (identifier, status or "空"))
         elif missing_value(data.get("处理", "")):
             block("设计稿自检问题没有写处理：%s" % identifier)
+
+
+def read_raster(af, target, label):
+    """只检查本地 PNG/JPEG/WebP 的文件与容器标识；不能证明图片来源或视觉内容。"""
+    try:
+        path = Path(target)
+        resolved = (af / path).resolve()
+        local_file = (not missing_value(target) and not path.is_absolute()
+                      and resolved.is_relative_to(af.resolve()) and resolved.is_file())
+    except (OSError, ValueError):
+        local_file = False
+    if not local_file:
+        block("%s 必须指向 .aiflow 内已存在的图片文件：%s" % (label, target or "空"))
+        return None
+    try:
+        content = resolved.read_bytes()
+    except OSError as exc:
+        block("%s 图片无法读取：%s" % (label, exc))
+        return None
+    png = (len(content) >= 45 and content.startswith(b"\x89PNG\r\n\x1a\n")
+           and content[12:16] == b"IHDR" and int.from_bytes(content[16:20], "big") > 0
+           and int.from_bytes(content[20:24], "big") > 0 and content[-12:-8] == b"\0\0\0\0"
+           and content[-8:-4] == b"IEND")
+    jpeg = (len(content) >= 12 and content.startswith(b"\xff\xd8\xff") and content.endswith(b"\xff\xd9")
+            and any(bytes((255, marker)) in content for marker in (192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207)))
+    webp = (len(content) >= 30 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+            and int.from_bytes(content[4:8], "little") + 8 == len(content)
+            and content[12:16] in (b"VP8 ", b"VP8L", b"VP8X"))
+    suffix = resolved.suffix.lower()
+    if not ((png and suffix == ".png") or (jpeg and suffix in (".jpg", ".jpeg")) or (webp and suffix == ".webp")):
+        block("%s 不是有效的非空 PNG/JPEG/WebP 图片：%s" % (label, target))
+        return None
+    return {"path": resolved, "sha256": hashlib.sha256(content).hexdigest()}
+
+
+def read_design_images(af):
+    manifest = af / "design-images.md"
+    if not manifest.is_file():
+        block("缺少设计图片清单 design-images.md；先生成设计图片并交用户确认")
+        return "", {}, ""
+    text = rd(manifest)
+    headings = re.findall(r"^##[ \t]+.*$", text, re.M)
+    if sum("设计图片" in heading for heading in headings) != 1:
+        block("design-images.md 必须有且只有一个「设计图片」小节")
+    header, rows = first_table(section(text, "设计图片"))
+    columns = ("图号", "覆盖页面", "图片文件", "生成方式", "调用证据")
+    if not set(columns) <= set(header) or len(header) != len(set(header)):
+        block("design-images.md 设计图片表缺少列或含重复列：" + " / ".join(columns))
+    images, bound = {}, []
+    for row in rows:
+        data = row_dict(header, row)
+        identifier = data.get("图号", "")
+        if not re.fullmatch(r"V\d+", identifier):
+            block("设计图片编号必须为 V 加数字：%s" % (identifier or "空"))
+            continue
+        if identifier in images:
+            block("重复设计图片编号：%s" % identifier)
+            continue
+        coverage = data.get("覆盖页面", "")
+        if not re.fullmatch(r"P\d+(?:\s*[/、,，]\s*P\d+)*", coverage):
+            block("设计图片覆盖页面必须列出 P 编号：%s" % identifier)
+        if data.get("生成方式") not in ("图像生成", "图像编辑"):
+            block("设计图片必须来自图像生成或图像编辑，不能用 HTML 截图：%s" % identifier)
+        if missing_value(data.get("调用证据", "")):
+            block("设计图片缺少图像工具调用证据：%s" % identifier)
+        raster = read_raster(af, data.get("图片文件", ""), "设计图片 " + identifier)
+        images[identifier] = {"pages": ids_in(coverage, "P"), "raster": raster}
+        bound.append({"row": data, "sha256": raster["sha256"] if raster else ""})
+    if not images:
+        block("design-images.md 没有有效设计图片")
+    fingerprint = hashlib.sha256(json.dumps(bound, ensure_ascii=False, sort_keys=True,
+                                           separators=(",", ":")).encode("utf-8")).hexdigest()
+    return text, images, fingerprint
+
+
+def check_design_image_gate(af, state, stage):
+    """图片确认是 HTML 制作的前置条件；返回 None 表示旧版或本阶段无需图片。"""
+    fields = ("design_image_status", "design_image_fingerprint")
+    if stage < 2 or (stage > 3 and not any(field in state for field in fields)):
+        return True, None
+    status = state.get("design_image_status")
+    if state.get("design_required") is False:
+        if status != "skipped":
+            block("不需要设计稿时 design_image_status 必须为 skipped")
+            return False, None
+        return True, None
+    if stage < 3 or state.get("design_required") is not True:
+        return True, None
+    if status != "confirmed":
+        block("设计图片尚未确认：design_image_status 必须为 confirmed；先生成图片并请用户确认，再制作 HTML 设计稿")
+        return False, None
+    before = len(BLOCK)
+    text, images, fingerprint = read_design_images(af)
+    if state.get("design_image_fingerprint") != fingerprint:
+        block("设计图片确认指纹与当前图片不一致；图片变更后须重新确认")
+    headings = re.findall(r"^##[ \t]+.*$", text, re.M)
+    if sum("用户确认" in heading for heading in headings) != 1:
+        block("design-images.md 必须有且只有一个「用户确认」小节")
+    if sum("评审记录" in heading for heading in headings) > 1:
+        block("design-images.md 不得重复「评审记录」小节")
+    body = section(text, "用户确认")
+    if release_fields(body, "确认结论") != ["已确认"]:
+        block("design-images.md 尚未取得唯一明确的图片用户确认")
+    quotes = release_fields(body, "用户原话")
+    if len(quotes) != 1 or missing_value(quotes[0]):
+        block("design-images.md 的图片用户确认缺少真实用户原话")
+    dates = release_fields(body, "确认时间")
+    try:
+        if len(dates) != 1 or datetime.fromisoformat(dates[0]).tzinfo is None:
+            raise ValueError("缺少唯一含时区的确认时间")
+    except ValueError:
+        block("design-images.md 的图片用户确认必须记录含时区的真实确认时间")
+    check_review(text, "design-images.md")
+    prototype_path = af / "artifacts" / PROTOTYPE
+    if state.get("prototype_required") is True and prototype_path.is_file():
+        header, rows = first_table(section(rd(prototype_path), "页面清单"))
+        expected_pages = {data.get("页面") for data in (row_dict(header, row) for row in rows)
+                          if re.fullmatch(r"P\d+", data.get("页面", ""))}
+        covered = set().union(*(image["pages"] for image in images.values())) if images else set()
+        for page in sort_ids(expected_pages - covered):
+            block("已确认设计图片未覆盖原型页面：%s；补图确认后再制作 HTML" % page)
+    return len(BLOCK) == before, images
+
+
+def check_design_image_comparison(text, af, pages, images):
+    page_header, page_rows = first_table(section(text, "页面与设计稿"))
+    for row in page_rows:
+        data = row_dict(page_header, row)
+        target = data.get("设计稿", "")
+        if re.match(r"https?://", target):
+            continue
+        try:
+            path = (af / target).resolve()
+            valid_html = (not missing_value(target) and path.is_relative_to(af.parent.resolve())
+                          and path.is_file() and path.suffix.lower() in (".html", ".htm")
+                          and bool(path.read_bytes().strip()))
+        except (OSError, ValueError):
+            valid_html = False
+        if not valid_html:
+            block("图片确认后的设计稿必须是项目内非空 HTML 文件：%s → %s" % (data.get("页面", ""), target or "空"))
+    header, rows = first_table(section(text, "图片还原核对"))
+    seen, screenshots = set(), set()
+    for row in rows:
+        data = row_dict(header, row)
+        page, baseline = data.get("页面", ""), data.get("基准图", "")
+        if page not in pages:
+            block("图片还原核对页面不存在：%s" % (page or "空"))
+            continue
+        seen.add(page)
+        if baseline not in images or page not in images[baseline]["pages"]:
+            block("图片还原核对基准图未覆盖页面：%s → %s" % (page, baseline or "空"))
+        screenshot = read_raster(af, data.get("HTML截图", ""), "HTML 截图 " + page)
+        if screenshot:
+            evidence = (page, screenshot["path"])
+            if evidence in screenshots:
+                block("图片还原核对重复使用同一页面的 HTML 截图：%s" % page)
+            screenshots.add(evidence)
+        raster = images.get(baseline, {}).get("raster")
+        if raster and screenshot and (raster["path"] == screenshot["path"] or raster["sha256"] == screenshot["sha256"]):
+            block("HTML 截图不能复用基准图文件或相同图片内容：%s" % page)
+        if data.get("核对结论") != "通过":
+            block("图片还原核对尚未通过：%s" % page)
+        if missing_value(data.get("差异与处理", "")):
+            block("图片还原核对缺少差异与处理：%s" % page)
+    for page in sort_ids(pages - seen):
+        block("设计页面缺少图片还原核对：%s" % page)
 
 
 def walkthrough_final(text, checkpoints):
@@ -703,6 +1151,184 @@ def check_design_system(af):
         block("design-system.md 没有写明设计规范的来源")
 
 
+def standard_path(root, value):
+    return (root / Path(value).expanduser()).resolve()
+
+
+def check_development_standards(root, state):
+    """规范可选；显式路径优先，其次项目文件，最后团队默认文件。"""
+    configured = state.get("development_standards", {})
+    if not isinstance(configured, dict):
+        block("state.development_standards 必须是字典")
+        return {}
+    for key in set(configured) - {"frontend", "backend"}:
+        block("state.development_standards 含未知配置：%s" % key)
+    standards = {}
+    for key, role, name in (("frontend", "FE", "frontend-standards.md"), ("backend", "BE", "backend-standards.md")):
+        value = configured.get(key, "")
+        if not isinstance(value, str):
+            block("state.development_standards.%s 必须是路径字符串，未配置时写空字符串" % key)
+            continue
+        value = value.strip()
+        try:
+            if value:
+                if missing_value(value):
+                    block("state.development_standards.%s 仍是占位路径" % key)
+                    continue
+                path = standard_path(root, value)
+            else:
+                path = root / ".aiflow" / name
+                if not path.exists():
+                    path = Path.home() / ".aiflow" / name
+                if not path.exists():
+                    continue
+                path = path.resolve()
+            if path.suffix.lower() != ".md":
+                block("开发规范文件必须为 Markdown：%s → %s" % (role, path))
+            elif not path.is_file():
+                block("开发规范文件不存在或不是文件：%s → %s" % (role, path))
+            elif not rd(path).lstrip("\ufeff").strip():
+                block("开发规范文件为空：%s → %s" % (role, path))
+            else:
+                standards[role] = path
+        except (OSError, RuntimeError, ValueError) as exc:
+            block("开发规范路径无法读取：%s → %s" % (role, exc))
+    return standards
+
+
+def check_standards_execution(text, standards, task_types, root):
+    used = {"BE" if kind == "JOB" else kind for kind in task_types.values()}
+    required = {role: path for role, path in standards.items() if role in used}
+    if not required:
+        return
+    header, rows = first_table(section(text, "开发规范执行"))
+    records = {}
+    for row in rows:
+        data = row_dict(header, row)
+        role = data.get("类型", "")
+        if role not in required:
+            continue
+        if role in records:
+            block("重复开发规范执行记录：%s" % role)
+            continue
+        records[role] = data
+    for role, path in required.items():
+        if role not in records:
+            block("缺少开发规范执行记录：%s" % role)
+            continue
+        data = records[role]
+        source = data.get("规范文件", "")
+        if missing_value(source):
+            block("开发规范执行记录缺少规范文件：%s" % role)
+        else:
+            try:
+                if standard_path(root, source) != path:
+                    block("开发规范执行记录与实际规范不一致：%s" % role)
+            except (OSError, RuntimeError, ValueError) as exc:
+                block("开发规范执行记录的路径无效：%s → %s" % (role, exc))
+        if data.get("自检结论") != "通过":
+            block("开发规范自检尚未通过：%s" % role)
+        if missing_value(data.get("证据", "")):
+            block("开发规范自检缺少证据：%s" % role)
+
+
+def read_tech_stack(af):
+    path = af / "tech-stack.md"
+    if not path.is_file():
+        block("缺少技术栈选型文件：%s；按 templates/tech-stack.md 记录并请用户确认" % path)
+        return "", {}, ""
+    text = rd(path).lstrip("\ufeff")
+    headings = list(re.finditer(r"^##[ \t]+.*$", text, re.M))
+    confirmations = [heading for heading in headings if "用户确认" in heading.group(0)]
+    selections = [heading for heading in headings if "选型清单" in heading.group(0)]
+    fingerprint = ""
+    if len(confirmations) != 1:
+        block("tech-stack.md 必须有且只有一个「用户确认」小节")
+    else:
+        if headings[-1] != confirmations[0]:
+            block("tech-stack.md 的用户确认必须是最后一个二级小节")
+        proposal = text[:confirmations[0].start()].replace("\r\n", "\n").strip()
+        fingerprint = hashlib.sha256(proposal.encode("utf-8")).hexdigest()
+    if len(selections) != 1:
+        block("tech-stack.md 必须有且只有一个「选型清单」小节")
+    header, rows = first_table(section(text, "选型清单"))
+    choices = {}
+    for row in rows:
+        data = row_dict(header, row)
+        identifier = data.get("选型", "")
+        if not re.fullmatch(r"S\d+", identifier):
+            block("技术栈选型编号必须为 S 加数字：%s" % (identifier or "空"))
+            continue
+        if identifier in choices:
+            block("重复技术栈选型编号：%s" % identifier)
+            continue
+        choices[identifier] = data
+        for column in ("用途", "技术/框架", "版本范围", "来源", "选择理由"):
+            if missing_value(data.get(column, "")):
+                block("技术栈选型缺少%s：%s" % (column, identifier))
+        if data.get("来源") not in ("用户指定", "沿用项目", "开发规范", "推荐"):
+            block("技术栈选型来源无效：%s" % identifier)
+        if data.get("来源") == "推荐" and missing_value(data.get("备选与取舍", "")):
+            block("技术栈推荐缺少备选与取舍：%s" % identifier)
+        if data.get("版本范围", "").lower() in ("latest", "*", "不限", "待定", "按默认"):
+            block("技术栈版本范围不可判定：%s" % identifier)
+    if not choices:
+        block("技术栈没有有效选型")
+    return text, choices, fingerprint
+
+
+def check_tech_stack(af, state):
+    text, choices, fingerprint = read_tech_stack(af)
+    if state.get("tech_stack_status") != "locked":
+        block("技术栈尚未确认锁定：state.tech_stack_status 必须为 locked")
+    if not fingerprint or state.get("tech_stack_fingerprint") != fingerprint:
+        block("技术栈锁定指纹与当前选型不一致；变更后须重新评审确认，不能只更新指纹")
+    problem = confirmation_problem(text, "tech-stack.md")
+    if problem:
+        block(problem)
+    check_review(text, "tech-stack.md")
+    return choices, fingerprint
+
+
+def check_tech_stack_execution(text, choices, fingerprint):
+    headings = re.findall(r"^##[ \t]+.*$", text, re.M)
+    if sum("技术栈核对" in heading for heading in headings) != 1:
+        block("开发日志必须有且只有一个「技术栈核对」小节")
+    body = section(text, "技术栈核对")
+    if release_fields(body, "技术栈指纹") != [fingerprint]:
+        block("技术栈核对仍基于旧选型，或缺少唯一技术栈指纹")
+    header, rows = first_table(body)
+    records = {}
+    for row in rows:
+        data = row_dict(header, row)
+        identifier = data.get("选型", "")
+        if identifier not in choices:
+            block("技术栈核对引用了未定义选型：%s" % (identifier or "空"))
+            continue
+        if identifier in records:
+            block("重复技术栈核对记录：%s" % identifier)
+            continue
+        records[identifier] = data
+    for identifier, choice in choices.items():
+        if identifier not in records:
+            block("缺少技术栈核对记录：%s" % identifier)
+            continue
+        data = records[identifier]
+        if data.get("实际技术/框架", "").casefold() != choice.get("技术/框架", "").casefold():
+            block("实际技术与锁定选型不一致：%s" % identifier)
+        version = data.get("实际版本", "")
+        if missing_value(version) or version.lower() in ("latest", "*", "待定"):
+            block("技术栈核对缺少实际版本：%s" % identifier)
+        locked_version = choice.get("版本范围", "")
+        # 精确版本可直接对比；其他版本范围由对应生态的工具核对，证据记录在表中。
+        if re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", locked_version) and version != locked_version:
+            block("实际版本与锁定的精确版本不一致：%s" % identifier)
+        if data.get("核对结论") != "通过":
+            block("技术栈核对尚未通过：%s" % identifier)
+        if missing_value(data.get("证据", "")):
+            block("技术栈核对缺少证据：%s" % identifier)
+
+
 def finish(root, stage):
     print("\n" + "=" * 56)
     print("项目：%s　当前阶段：%s" % (root.name, stage))
@@ -726,14 +1352,22 @@ def main():
     configure_output()
     BLOCK.clear()
     WARN.clear()
-    if len(sys.argv) != 2:
-        print("用法：python check.py <项目目录>")
+    fingerprint_only = len(sys.argv) == 3 and sys.argv[2] in ("--tech-stack-fingerprint", "--design-image-fingerprint")
+    if len(sys.argv) != 2 and not fingerprint_only:
+        print("用法：python check.py <项目目录> [--tech-stack-fingerprint | --design-image-fingerprint]")
         return 1
     root = Path(sys.argv[1]).resolve()
     af = root / ".aiflow"
+    if fingerprint_only:
+        image_fingerprint = sys.argv[2] == "--design-image-fingerprint"
+        _, _, fingerprint = read_design_images(af) if image_fingerprint else read_tech_stack(af)
+        if BLOCK:
+            return finish(root, "设计图片草案" if image_fingerprint else "技术栈草案")
+        print(fingerprint)
+        return 0
     state_path = af / "state.yaml"
     if not state_path.exists():
-        block("找不到 %s；先按 templates/state.yaml 初始化" % state_path)
+        block("尚无流程状态 %s；若仍在访谈，请继续在对话中澄清；共识收口后再统一落档" % state_path)
         return finish(root, 0)
     try:
         state = parse_state(rd(state_path))
@@ -759,37 +1393,20 @@ def main():
     mode = state.get("mode")
     if mode not in (1, 2, 3):
         block("state.yaml.mode 必须为 1 / 2 / 3")
-    if mode in (2, 3) and stage >= 6:
-        sessions = required_dict(state, "agent_sessions")
-        if missing_value(str(sessions.get("developer") or "")):
-            block("模式 %d 缺少 agent_sessions.developer" % mode)
-        developer = str(sessions.get("developer") or "").strip()
-        designer = str(sessions.get("designer") or "").strip()
-        if stage >= 7 and state.get("design_required") is True:
-            if missing_value(designer):
-                block("模式 %d 缺少 agent_sessions.designer" % mode)
-            elif designer == developer:
-                block("模式 %d 的 designer 与 developer 必须是独立身份" % mode)
-        if stage >= 8:
-            tester = str(sessions.get("tester") or "").strip()
-            if missing_value(tester):
-                block("模式 %d 缺少 agent_sessions.tester" % mode)
-            elif developer == tester:
-                block("模式 %d 的 developer 与 tester 必须是独立身份" % mode)
-        if mode == 3 and stage >= 10:
-            reviewer = str(sessions.get("final_reviewer") or "").strip()
-            if not re.match(r"^(human|model):\S+", reviewer):
-                block("模式 3 缺少独立终验 agent_sessions.final_reviewer（须为 human:<姓名> 或 model:<名称>）")
-            elif reviewer in (developer, designer, str(sessions.get("tester") or "").strip()):
-                block("模式 3 的 final_reviewer 必须独立于开发、设计和测试")
-            if state.get("final_review_result") != "pass":
-                block("模式 3 的独立终验尚未通过")
-            if missing_value(str(state.get("final_review_evidence") or "")):
-                block("模式 3 缺少 final_review_evidence")
 
     listed = required_list(state, "artifacts")
     open_bugs = set(required_list(state, "open_bugs"))
     pending_decisions = required_list(state, "pending_decisions")
+    clarification = state.get("clarification")
+    interviewing = isinstance(clarification, dict) and clarification.get("status") == "pending"
+    questions = check_questions(af, stage, pending_decisions, required=not interviewing)
+    if not check_clarification(state, stage, questions):
+        return finish(root, stage)
+
+    image_ready, design_images = check_design_image_gate(af, state, stage)
+    if not image_ready:
+        return finish(root, stage)
+
     if len(listed) != len(set(listed)):
         block("state.yaml.artifacts 有重复登记")
     for name in listed:
@@ -799,6 +1416,7 @@ def main():
     art_dir = af / "artifacts"
     paths = sorted(art_dir.glob("*.md")) if art_dir.exists() else []
     texts = {path.name: rd(path) for path in paths}
+    invalidated = check_invalidated_artifacts(state, texts, stage)
     actual = set(texts)
     required = required_artifacts(stage, state)
     for name in sorted(set(listed) - actual):
@@ -806,16 +1424,22 @@ def main():
     for name in sorted(actual - set(listed)):
         block("产物存在但未登记进 state.yaml：%s" % name)
     for name in required:
-        if name not in actual:
+        if name in invalidated:
+            block("必需产物已失效：%s；完成复核、重做和必要确认后才能恢复" % name)
+        elif name not in actual:
             block("阶段 %d 缺少必需产物：%s" % (stage, name))
         elif not texts[name].strip():
             block("必需产物为空：%s" % name)
     for name in actual:
+        if name in invalidated:
+            continue
         match = re.match(r"^(\d{2})-", name)
         if match and int(match.group(1)) > stage and not (stage == 8 and name == BUGS):
             warn("存在晚于当前阶段的产物，回退后应作废或移出当前集：%s" % name)
         if name in CONDITIONAL_ARTIFACTS and state.get(CONDITIONAL_ARTIFACTS[name][1]) is False:
             block("PRD 判断不需要，但存在产物：%s；改 PRD 的交付形态判断，或移除该产物" % name)
+    texts = {name: text for name, text in texts.items() if name not in invalidated}
+    actual = set(texts)
 
     facts_path = af / "facts.md"
     facts = ""
@@ -860,12 +1484,12 @@ def main():
     if stage == 0 and facts_version != 0 and not facts:
         facts_version = 0
 
-    if "00-intake.md" in required:
+    if INTAKE in required and INTAKE not in invalidated:
         intake_version = version_declaration(texts.get("00-intake.md", ""), "00-intake.md", r"依据 facts v(\d+)")
         if intake_version is not None and intake_version != 0:
             block("00-intake.md 必须基于 facts v0")
     for name in required:
-        if name.startswith("00-"):
+        if name.startswith("00-") or name in invalidated:
             continue
         artifact_version = version_declaration(texts.get(name, ""), name, r"依据 facts v(\d+)")
         if artifact_version is not None and artifact_version != facts_version:
@@ -876,7 +1500,6 @@ def main():
         if signoffs.get(key) not in ("pending", "confirmed", "skipped"):
             block("state.signoffs.%s 必须为 pending / confirmed / skipped" % key)
     check_signoff(signoffs, "scope", texts, INTAKE, "范围")
-    check_questions(af, stage, pending_decisions)
     if stage >= 1:
         check_signoff(signoffs, "requirement", texts, RESEARCH, "需求")
     prototype_pages, design_pages, checkpoints = set(), set(), {}
@@ -899,6 +1522,8 @@ def main():
     if stage >= 3 and state.get("design_required") is True and DESIGN in texts:
         design_pages, checkpoints = check_design(texts[DESIGN], af, prototype_pages)
         check_design_selfcheck(texts[DESIGN])
+        if design_images is not None:
+            check_design_image_comparison(texts[DESIGN], af, design_pages, design_images)
     if stage >= 7:
         walkthrough = state.get("walkthrough_result")
         if state.get("design_required") is False and walkthrough != "skipped":
@@ -918,7 +1543,10 @@ def main():
             block("产物引用了从未定义的编号：%s → %s" % (name, identifier))
 
     task_ids = set()
+    task_types, task_acceptance = {}, {}
     mapping_rows = {}
+    development_standards = check_development_standards(root, state) if stage >= 4 else {}
+    stack_choices, stack_digest = check_tech_stack(af, state) if stage >= 4 else ({}, "")
     if stage >= 4 and MAPPING in actual:
         mapping = texts[MAPPING]
         main_section = section(mapping, "映射表")
@@ -931,6 +1559,8 @@ def main():
                     block("%s 重复映射：%s" % (MAPPING, identifier))
                     continue
                 mapping_rows[identifier] = (header, row)
+                if identifier not in ids_a:
+                    block("映射表包含失效或不存在的验收标准：%s" % identifier)
                 for column in ("落在哪", "由哪条约束保证"):
                     if missing_value(data.get(column, "")):
                         block("映射项缺少%s：%s" % (column, identifier))
@@ -954,6 +1584,8 @@ def main():
                     block("facts 05 重复契约映射：%s" % identifier)
                     continue
                 contract_map[identifier] = data
+                if identifier not in ids_a:
+                    block("facts 05 包含失效或不存在的验收标准：%s" % identifier)
         for identifier in sorted(ids_a - set(contract_map)):
             block("facts 05 契约映射缺少：%s" % identifier)
         for identifier in sorted(ids_a & set(contract_map)):
@@ -991,9 +1623,11 @@ def main():
                 block("任务缺少详情：%s" % identifier)
                 task_acceptance[identifier] = set()
                 continue
-            task_acceptance[identifier] = ids_in(details, "A")
+            task_acceptance[identifier] = ids_in(" ".join(release_fields(details, "验收标准")), "A")
             if not task_acceptance[identifier]:
                 block("任务详情缺少验收标准：%s" % identifier)
+            for standard in sort_ids(task_acceptance[identifier] - ids_a):
+                block("任务引用失效或不存在的验收标准：%s → %s" % (identifier, standard))
         for identifier, refs in dependencies.items():
             for dependency in refs - task_ids:
                 block("任务依赖了不存在的编号：%s → %s" % (identifier, dependency))
@@ -1075,6 +1709,8 @@ def main():
         for identifier, value in dev_status.items():
             if identifier in task_ids and value != "完成":
                 block("开发日志显示任务未完成：%s=%s" % (identifier, value))
+        check_standards_execution(texts[DEVLOG], development_standards, task_types, root)
+        check_tech_stack_execution(texts[DEVLOG], stack_choices, stack_digest)
 
     failed_tasks = set()
     acceptance_results = {}
@@ -1116,13 +1752,15 @@ def main():
                     block("%s 重复验收覆盖行：%s" % (TESTREPORT, identifier))
                     continue
                 coverage_rows[identifier] = data
+                if identifier not in ids_a:
+                    block("测试覆盖表包含失效或不存在的验收标准：%s" % identifier)
                 case_refs = ids_in(data.get("对应用例", data.get("用例", "")), "E")
                 test_e_ids.update(case_refs)
                 for case_id in case_refs:
                     if case_id in test_case_acceptance and identifier not in test_case_acceptance[case_id]:
                         block("同一 E 用例绑定多个验收标准，需拆成独立用例：%s" % case_id)
                     test_case_acceptance.setdefault(case_id, set()).add(identifier)
-                result = clean_md(data.get("结果", data.get("覆盖", "")))
+                result = clean_md(pick(data, "执行结果", "结果", "覆盖"))
                 if not case_refs:
                     block("验收标准未绑定 E 用例：%s" % identifier)
                 if result == "通过":
@@ -1152,7 +1790,7 @@ def main():
             if normalized == "uncovered":
                 block("验收标准未执行，不得放行：%s" % identifier)
             documented = test_acceptance_results.get(identifier)
-            if documented and documented != normalized:
+            if stage == 8 and documented and documented != normalized:
                 block("测试报告与 state 的验收结果不一致：%s 文档=%s，state=%s" % (identifier, documented, normalized))
         for identifier, (map_header, map_row) in mapping_rows.items():
             refs = ids_in(" ".join(map_row), "E")
@@ -1160,12 +1798,16 @@ def main():
                 block("阶段 8 未在映射表回填用例：%s" % identifier)
             elif not refs <= test_e_ids:
                 block("映射表引用了不存在的用例：%s → %s" % (identifier, ", ".join(sort_ids(refs - test_e_ids))))
+            for case_id in refs & test_e_ids:
+                if identifier not in test_case_acceptance.get(case_id, set()):
+                    block("映射表用例与验收标准的关联不一致：%s → %s" % (identifier, case_id))
 
     bugs_text = texts.get(BUGS, "")
     bug_summary = {}
     bug_tasks = {}
     bug_acceptance = {}
     bug_owner = {}
+    bug_retest_passes = {}
     if bugs_text:
         header, rows = first_table(section(bugs_text, "汇总"))
         for row in rows:
@@ -1182,24 +1824,40 @@ def main():
             bug_summary[identifier] = status
             bug_tasks[identifier] = ids_in(data.get("关联任务", ""), "T")
             bug_owner[identifier] = clean_md(data.get("归属", ""))
+            if not bug_tasks[identifier]:
+                block("缺陷没有关联任务：%s" % identifier)
+            for task_id in sort_ids(bug_tasks[identifier]):
+                if task_id not in task_ids:
+                    block("缺陷关联了不存在的任务：%s → %s" % (identifier, task_id))
+                elif bug_owner[identifier] != ("FE" if task_types.get(task_id) == "FE" else "BE"):
+                    block("缺陷归属与任务类型不一致：%s → %s" % (identifier, task_id))
             details = detail_section(bugs_text, identifier)
-            bug_acceptance[identifier] = ids_in(details, "A")
+            bug_acceptance[identifier] = ids_in(release_field(details, "关联验收"), "A")
+            if not bug_acceptance[identifier] or not bug_acceptance[identifier] <= ids_a:
+                block("缺陷的关联验收缺失或无效：%s" % identifier)
+            task_standards = set().union(*(task_acceptance.get(task_id, set()) for task_id in bug_tasks[identifier]))
+            if not bug_acceptance[identifier] <= task_standards:
+                block("缺陷的关联验收不属于关联任务：%s" % identifier)
             if not details:
                 block("缺陷缺少详情：%s" % identifier)
-            elif status == "已关闭" and ("复测结论" not in details or not valid_closed_retest(details)):
+            elif status == "已关闭" and not valid_closed_retest(details):
                 block("已关闭缺陷缺少通过复测结论：%s" % identifier)
+            bug_retest_passes[identifier] = check_bug_retests(
+                details, identifier, bug_acceptance[identifier], test_case_acceptance, status == "已关闭")
+    check_agent_sessions(state, stage, task_types, bug_owner.values())
+
     summary_open = {identifier for identifier, status in bug_summary.items() if status in OPEN_BUG_STATUSES}
-    if open_bugs != summary_open:
+    if BUGS not in invalidated and open_bugs != summary_open:
         block("state.open_bugs 与 %s 不一致：state=%s；缺陷单=%s" % (
             BUGS, ", ".join(sorted(open_bugs)) or "空", ", ".join(sorted(summary_open)) or "空"))
-    if open_bugs and not bugs_text:
+    if BUGS not in invalidated and open_bugs and not bugs_text:
         block("state 有未关闭缺陷，但缺少 %s" % BUGS)
     for identifier in sorted(failed_tasks):
         if not any(identifier in bug_tasks.get(bug, set()) for bug in bug_summary):
             block("不通过任务没有关联缺陷单：%s" % identifier)
     bug_linked_acceptance = set().union(*bug_acceptance.values()) if bug_acceptance else set()
-    for identifier, value in acceptance_results.items():
-        if str(value).lower() == "fail" and identifier not in bug_linked_acceptance:
+    for identifier, value in test_acceptance_results.items():
+        if value == "fail" and identifier not in bug_linked_acceptance:
             block("失败验收标准没有在具体缺陷详情中关联：%s" % identifier)
     if stage >= 9:
         if open_bugs or summary_open:
@@ -1207,6 +1865,22 @@ def main():
         for identifier, status in bug_summary.items():
             if status != "已关闭":
                 block("缺陷单不是已关闭状态：%s=%s" % (identifier, status))
+        # 初测报告保留历史；阶段 9 用完整复测推进状态，阶段 10 起另查全量回归执行。
+        for identifier, documented in test_acceptance_results.items():
+            expected = documented
+            if documented == "fail":
+                related = {bug for bug, standards in bug_acceptance.items() if identifier in standards}
+                if related and all(bug_summary[bug] == "已关闭" for bug in related):
+                    passed_cases = set().union(*(bug_retest_passes[bug] for bug in related))
+                    required_cases = {case_id for case_id, standards in test_case_acceptance.items() if identifier in standards}
+                    if required_cases and (required_cases <= passed_cases or stage >= 10):
+                        expected = "pass"
+            current = str(acceptance_results.get(identifier, "")).lower()
+            if expected and current != expected:
+                if stage == 9:
+                    block("阶段 9 验收结果缺少完整复测依据：%s 文档及复测=%s，state=%s" % (identifier, expected, current))
+                else:
+                    block("测试报告及复测与 state 的验收结果不一致：%s 记录=%s，state=%s" % (identifier, expected, current))
 
     if stage >= 10 and REGRESSION in actual:
         if pending_decisions:
@@ -1231,16 +1905,28 @@ def main():
         elif state_result == "conditional" or doc_result == "有条件通过":
             if not conditions:
                 block("有条件通过但未记录条件")
+            if any(missing_value(condition) or condition == "无" for condition in conditions):
+                block("回归条件不能为空、占位或「无」")
+            doc_conditions = release_fields(section(regression_text, "结论"), "条件")
+            if set(doc_conditions) != set(conditions):
+                block("回归条件与 state 不一致")
             if not confirmed:
                 block("有条件通过但未取得用户显式确认")
-        elif state_result == "pass" and conditions:
+            problem = confirmation_problem(regression_text, REGRESSION)
+            if problem:
+                block(problem)
+        elif state_result == "pass" and (conditions or any(
+                condition != "无" for condition in release_fields(section(regression_text, "结论"), "条件"))):
             block("结论为通过时不应仍挂回归条件")
         execution = section(regression_text, "执行结果")
         header, rows = first_table(execution)
-        regression_covered = set()
+        regression_covered, regression_cases = set(), set()
         for row in rows:
             data = row_dict(header, row)
-            standards = ids_a & ids_in(" ".join(row), "A")
+            declared = ids_in(data.get("验收标准", ""), "A")
+            for identifier in sort_ids(declared - ids_a):
+                block("回归执行引用失效或不存在的验收标准：%s" % identifier)
+            standards = ids_a & declared
             if not standards:
                 continue
             e_refs = ids_in(data.get("用例", ""), "E")
@@ -1258,8 +1944,12 @@ def main():
             valid_pairs = all(standards <= test_case_acceptance.get(case_id, set()) for case_id in e_refs)
             if e_refs and not unknown_e and valid_pairs and result == "通过":
                 regression_covered.update(standards)
+                regression_cases.update(e_refs)
         for identifier in sorted(ids_a - regression_covered):
             block("全量回归未以有效通过用例覆盖验收标准：%s" % identifier)
+        current_cases = {case_id for case_id, standards in test_case_acceptance.items() if standards & ids_a}
+        for case_id in sort_ids(current_cases - regression_cases):
+            block("全量回归未执行当前验收用例：%s" % case_id)
         fe_closed = sorted(b for b, s in bug_summary.items() if s == "已关闭" and bug_owner.get(b) == "FE")
         if state.get("design_required") is True and fe_closed:
             if release_field(section(regression_text, "设计还原复核"), "复核结论") != "通过":
@@ -1284,7 +1974,11 @@ def main():
         if missing_value(release_field(execution, "观察窗结论")):
             block("上线执行结果缺少观察窗结论")
 
-    print("已检查：状态 / 确认 / 问题 / 设计规范 / 产物 / 编号 / 覆盖 / 版本 / 设计走查 / 缺陷 / 回归 / 发布")
+    if invalidated:
+        print("失效待复核：%s" % "、".join(sorted(invalidated)))
+        if BUGS in invalidated and open_bugs:
+            print("待迁移的未关闭缺陷：%s" % "、".join(sorted(open_bugs)))
+    print("已检查：状态 / 澄清 / 确认 / 问题 / 设计规范 / 开发规范 / 技术栈锁定 / 产物与失效 / 编号 / 覆盖 / 版本 / 设计走查 / 缺陷 / 回归 / 发布")
     return finish(root, stage)
 
 

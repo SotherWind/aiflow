@@ -1,5 +1,6 @@
 /* aiflow 版式检查：在浏览器里量按钮、标签、输入框的文字和图标是不是居中、有没有换行溢出。
    用法：用浏览器自动化工具（Playwright 等）把本文件注入页面，再执行 aiflowLayoutCheck()，返回问题列表；空列表表示没查出问题。
+   可传根节点 aiflowLayoutCheck(root)，根控件和后代都会检查。
    阶段 2 / 3 交付原型和设计稿前、阶段 7 走查实现页面时都跑一次。查得出偏移、换行、溢出，查不出「好不好看」。
    重复打开同一页面时在地址后加 ?v=时间戳，避免读到浏览器缓存的旧页面。 */
 (function () {
@@ -18,7 +19,8 @@
   function content(el) {
     var parts = [], tops = [], walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (var node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent.trim() || (node.parentElement && node.parentElement.closest(SKIP))) continue;
+      var parent = node.parentElement;
+      if (!node.textContent.trim() || (parent && (parent.closest(SKIP) || getComputedStyle(parent).visibility !== 'visible'))) continue;
       var range = document.createRange(); range.selectNodeContents(node);
       [].forEach.call(range.getClientRects(), function (r) { if (r.width > 0) { parts.push(r); tops.push(r.top); } });
     }
@@ -72,6 +74,8 @@
   }
   window.aiflowLayoutCheck = function (root) {
     var scope = root || document, issues = [];
+    if (scope.matches && scope.matches(CENTER)) check(scope, true, issues);
+    if (scope.matches && scope.matches(VERTICAL)) check(scope, false, issues);
     scope.querySelectorAll(CENTER).forEach(function (el) { check(el, true, issues); });
     scope.querySelectorAll(VERTICAL).forEach(function (el) { check(el, false, issues); });
     return issues;

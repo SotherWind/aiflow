@@ -23,7 +23,7 @@
 1. 先定设计规范：按 `references/design-system.md` 找项目或公司已有的规范，记进 `.aiflow/design-system.md`。有规范就用它的令牌和组件。
 2. 没有规范时，B 端 Web 默认用 **Ant Design 默认主题**的样式。它是国内中后台最常见的组件库，墨刀、即时设计、MasterGo、Figma 都有现成的组件包，设计师和前端都能直接对上。
 3. HTML 原型直接用本 skill 的 `templates/prototype-kit/`：一套照 Ant Design 默认风格写的样式包。`build.py` 构建时把样式内联进页面，并用 `.aiflow/design-system.md` 的令牌覆盖默认值。
-4. 没有规范时，原型用 Ant Design 的样式不等于前端必须用它，技术选型由阶段 4 的架构师定。规范声明了组件库时，架构师的选型要能用它。
+4. 没有规范时，原型用 Ant Design 的样式不等于前端必须用它，阶段 4 的架构师按 `references/tech-stack.md` 提出选型，经用户确认后锁定。规范声明了组件库时，架构师的选型要能用它。
 
 ## 三、交付物结构
 

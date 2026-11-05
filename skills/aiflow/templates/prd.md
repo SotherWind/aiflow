@@ -60,14 +60,13 @@
 
 - 设计规范：<沿用 XX / 无，按 Ant Design 默认主题>（需要原型或设计稿时必填，记录在 `.aiflow/design-system.md`）
 
-> 判断依据见 `experts/pm.md` 与 `experts/ux.md`。用户确认 PRD 时一起确认这两项，并同步 `state.yaml` 的 `prototype_required`、`design_required`。
+> 判断依据见 `experts/pm.md` 与 `experts/ux.md`。用户确认后主会话同步 `prototype_required`、`design_required`；不需要设计时 `design_image_status: skipped`，需要时为 `pending`，阶段 3 先看图确认再制作 HTML。
 
-## 八、待确认清单
+## 八、澄清结论
 
-- [ ] <真正未决的问题；登记进 `.aiflow/questions.md`>
-- [ ] <没有则删除示例并写「无」>
+- <本阶段关键决定及其依据，关联已归档的问题编号；无需新澄清时说明已有依据>
 
-> 用户确认 PRD 之前必须全部解决。用户说「你定」时，在台账里记「按推荐」和用户原话。
+> PRD 在本轮澄清收口后生成。评审引出新问题时先回到对话，解决后再更新本文件与台账。
 
 ## 评审记录
 

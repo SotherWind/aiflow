@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """aiflow check.py 的正常放行与假绿反例测试。仅使用标准库。"""
+import hashlib
 import json
 import os
+import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -91,10 +95,59 @@ QUESTIONS = """## 台账
 | Q1 | 0 | 示例问题 | R1 | — | 推荐甲 | 「选甲」 | 已解决 | |
 """
 
+RESEARCH_NOTES = """
+## 调研记录（按需）
+| 阶段 / 关联问题 | 检索主题 / 范围 | 来源与链接 | 查阅日期 / 版本 | 已核实做法及位置 | 局限 / 推断 / 未验证 | 对推荐的影响 |
+|---|---|---|---|---|---|---|
+| 2 / Q2 | 删除恢复机制 | [示例官方说明](https://example.invalid/recovery) | 2026-11-03 / v1 | 文档描述限时恢复 | 未运行验证 | 推荐 B，仍需用户决定 |
+"""
+
+
+def clarified(stage):
+    """夹具已完成本阶段访谈；不是从产物 signoff 自动推断。"""
+    return {
+        "stage": stage, "status": "confirmed",
+        "summary": "本轮范围、约束和默认项已逐项展示，无遗留决策",
+        "user_quote": "确认理解一致", "confirmed_at": "2026-11-02T10:00:00+08:00",
+    }
+
+
 DESIGN_SYSTEM = """# 设计规范
 - 来源：无，按 Ant Design 默认主题
 - 依据：问题台账 Q1
 """
+
+IMAGE_COMPARISON = """
+## 图片还原核对
+| 页面 | 基准图 | HTML截图 | 核对结论 | 差异与处理 |
+|---|---|---|---|---|
+| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |
+"""
+
+
+def png_bytes(color):
+    """生成有效的 1px 测试位图；这里只模拟图像工具输出，非产品设计产物。"""
+    def chunk(kind, content):
+        return struct.pack(">I", len(content)) + kind + content + struct.pack(">I", zlib.crc32(kind + content))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\0" + bytes(color))) + chunk(b"IEND", b""))
+
+TECH_STACK = """# 技术栈选型与锁定
+
+## 一、约束与现状
+没有用户硬性指定；按当前项目和业务需求选择。
+
+## 二、选型清单
+| 选型 | 用途 | 技术/框架 | 版本范围 | 来源 | 选择理由 | 备选与取舍 |
+|---|---|---|---|---|---|---|
+| S1 | 前端 | example-ui | 1.0.0 | 推荐 | 支持本轮交互 | 其他方案增加迁移成本 |
+| S2 | 后端 | example-api | 2.0.0 | 沿用项目 | 与现有服务兼容 | 不替换现有框架 |
+""" + CONFIRM
+
+
+def stack_fingerprint(text):
+    proposal = text.split("## 用户确认", 1)[0].replace("\r\n", "\n").strip()
+    return hashlib.sha256(proposal.encode("utf-8")).hexdigest()
 
 
 def prd_doc(prototype, design):
@@ -152,7 +205,8 @@ DESIGN = """> 依据 facts v1 生成
 |---|---|---|---|---|
 | W1 | P1 | 页面 | 从主流程能到达本页 | 是 |
 | W2 | P1 | 交互 | I1 按标注实现 | 是 |
-""" + "".join("| W%d | P1 | 间距 | 要求 %d | 否 |\n" % (n, n) for n in range(3, 11)) + SELFCHECK + CONFIRM
+""" + "".join("| W%d | P1 | 间距 | 要求 %d | 否 |\n" % (n, n) for n in range(3, 10)) + \
+    "| W10 | P1 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 是 |\n" + IMAGE_COMPARISON + SELFCHECK + CONFIRM
 
 
 def walkthrough_doc(results, score, conclusion, issues=""):
@@ -192,6 +246,7 @@ class CheckTests(unittest.TestCase):
         self.af = self.root / ".aiflow"
         self.arts = self.af / "artifacts"
         self.arts.mkdir(parents=True)
+        self.home = self.root / "home"
         self.state = None
 
     def tearDown(self):
@@ -211,6 +266,67 @@ class CheckTests(unittest.TestCase):
         self.assertIn(old, text)
         path.write_text(text.replace(old, new), encoding="utf-8")
 
+    def record_dispatch(self, *roles):
+        """用明确的测试派工/完成事件模拟本阶段执行，不以会话存在代替执行。"""
+        stage = self.state["stage"]
+        self.state["stage_dispatch"] = {"stage": stage}
+        self.state["stage_dispatch"].update({role: "test-call:stage%d-%s; completed:test-result-stage%d-%s" %
+                                             (stage, role, stage, role) for role in roles})
+
+    def image_fingerprint_command(self):
+        return subprocess.run([sys.executable, str(CHECK), str(self.root), "--design-image-fingerprint"],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def write_design_images(self, pages=("P1",)):
+        body = "# 设计图片\n\n## 设计图片\n| 图号 | 覆盖页面 | 图片文件 | 生成方式 | 调用证据 |\n|---|---|---|---|---|\n"
+        for index, page in enumerate(pages, 1):
+            for relative, color in (("design-images/" + page + ".png", (index, 64, 128)),
+                                    ("design/img/" + page + ".png", (index, 65, 128))):
+                path = self.af / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(png_bytes(color))
+            body += "| V%d | %s | design-images/%s.png | 图像生成 | test-only-imagegen-call-%d |\n" % (index, page, page, index)
+        self.write_af("design-images.md", body + CONFIRM)
+
+    def confirm_design_images(self, pages=("P1",)):
+        self.write_design_images(pages)
+        result = self.image_fingerprint_command()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.state["design_image_status"] = "confirmed"
+        self.state["design_image_fingerprint"] = result.stdout.strip()
+
+    def write_bug(self, records=(), task="T1", owner="BE", standard="A1", status="已关闭"):
+        rows = "".join("| %d | %s | %s | %s | %s |\n" % row for row in records)
+        self.write_art("09-bugs.md", """> 依据 facts v1 生成
+## 汇总
+| 编号 | 标题 | 关联任务 | 归属 | 状态 |
+|---|---|---|---|---|
+| BUG-1 | 示例 | %s | %s | %s |
+
+### BUG-1 · 示例
+- 关联验收：%s
+- 现象：失败
+
+#### 复测记录
+| 轮次 | 用例 | 验收标准 | 结果 | 证据 |
+|---|---|---|---|---|
+%s
+#### 复测结论
+- 结论：通过 → 已关闭
+""" % (task, owner, status, standard, rows))
+
+    def fail_initial_test(self):
+        self.replace_art("08-test-report.md", "| T1 | BE | 1 | 1 | 0 | 通过 | — |",
+                         "| T1 | BE | 1 | 0 | 1 | 不通过 | BUG-1 |")
+        self.replace_art("08-test-report.md", "| A1 | E1 | 通过 |", "| A1 | E1 | 失败 |")
+        self.state["acceptance_results"]["A1"] = "fail"
+
+    def write_standards_log(self, rows):
+        body = (self.arts / "06-dev-log.md").read_text(encoding="utf-8")
+        body += "\n## 开发规范执行\n| 类型 | 规范文件 | 自检结论 | 证据 |\n|---|---|---|---|\n"
+        body += "".join("| %s | %s | %s | %s |\n" % row for row in rows)
+        self.write_art("06-dev-log.md", body)
+
     def make_full(self, design=True):
         """阶段 11 的完整项目。design=True 时含原型、设计稿与设计走查。"""
         self.design = design
@@ -220,6 +336,7 @@ class CheckTests(unittest.TestCase):
         self.write_art("01-research.md", "> 依据 facts v1 生成\nA1 A2 R1\n" + CONFIRM)
         self.write_art("02-prd.md", prd_doc(design, design))
         self.write_art("04-arch.md", "> 依据 facts v1 生成\nA1 A2 R1\n")
+        self.write_af("tech-stack.md", TECH_STACK)
         if design:
             self.write_art("02-prototype.md", PROTOTYPE)
             self.write_art("03-design.md", DESIGN)
@@ -257,6 +374,14 @@ class CheckTests(unittest.TestCase):
 | T1 | BE | 后端任务 | 完成 |
 | T2 | FE | 前端任务 | 完成 |
 """)
+        self.write_art("06-dev-log.md", (self.arts / "06-dev-log.md").read_text(encoding="utf-8") + """
+## 技术栈核对
+- 技术栈指纹：%s
+| 选型 | 实际技术/框架 | 实际版本 | 核对结论 | 证据 |
+|---|---|---|---|---|
+| S1 | example-ui | 1.0.0 | 通过 | frontend-manifest.log |
+| S2 | example-api | 2.0.0 | 通过 | backend-manifest.log |
+""" % stack_fingerprint(TECH_STACK))
         self.write_art("08-test-report.md", """> 依据 facts v1 生成
 ## 一、按任务结论
 | 任务 | 类型 | 用例数 | 通过 | 失败 | 结论 | 缺陷 |
@@ -296,17 +421,60 @@ class CheckTests(unittest.TestCase):
         self.state = {
             "flow_version": 2, "project": "fixture", "stage": 11, "expert": "operator", "mode": 1,
             "facts_version": 1, "artifacts": sorted(CORE_NAMES + (DESIGN_NAMES if design else [])),
+            "invalidated_artifacts": [],
             "open_bugs": [], "open_ux_issues": [], "pending_decisions": [],
+            "clarification": clarified(4),
             "signoffs": {"scope": "confirmed", "requirement": "confirmed", "prd": "confirmed",
                          "prototype": signoff, "design": signoff},
             "prototype_required": design, "design_required": design,
+            "tech_stack_status": "locked", "tech_stack_fingerprint": stack_fingerprint(TECH_STACK),
             "task_status": {"T1": "done", "T2": "done"},
             "walkthrough_result": "pass" if design else "skipped",
             "acceptance_results": {"A1": "pass", "A2": "pass"},
             "regression_result": "pass", "regression_conditions": [], "regression_user_confirmed": False,
             "release_status": "verified", "agent_sessions": {},
+            "design_image_status": "skipped", "design_image_fingerprint": "",
         }
+        if design:
+            self.confirm_design_images()
         dump_state(self.af / "state.yaml", self.state)
+
+    def invalidate_after(self, stage):
+        self.state["stage"] = stage
+        if stage <= 4:
+            self.state["clarification"] = clarified(stage)
+        invalid = [name for name in self.state["artifacts"] if int(name[:2]) >= stage]
+        self.state["invalidated_artifacts"] = invalid
+        for name, key in (("00-intake.md", "scope"), ("01-research.md", "requirement"),
+                          ("02-prd.md", "prd"), ("02-prototype.md", "prototype"), ("03-design.md", "design")):
+            if name in invalid:
+                self.state["signoffs"][key] = "pending"
+        if {"05-tasks.md", "06-dev-log.md"} & set(invalid):
+            self.state["task_status"] = {}
+        if "07-walkthrough.md" in invalid:
+            self.state["walkthrough_result"] = "not_run"
+        if "08-test-report.md" in invalid:
+            self.state["acceptance_results"] = {}
+        if "10-regression.md" in invalid:
+            self.state.update(regression_result="not_run", regression_conditions=[], regression_user_confirmed=False)
+        if "11-release.md" in invalid:
+            self.state["release_status"] = "planned"
+        if {"08-test-report.md", "10-regression.md"} & set(invalid):
+            self.state.update(final_review_result="not_run", final_review_evidence="")
+
+    def replace_acceptance(self):
+        facts = FACTS.replace("版本：v1", "版本：v2").replace(
+            "| A2 | 标准二 | R1 | 能 |",
+            "| ~~A2~~ | ~~标准二~~ | R1 | 能 |\n| A3 | 新标准三 | R1 | 能 |",
+        ).replace("| A2 | 校验 | 约束二 |", "| A3 | 校验 | 新约束三 |")
+        self.write_af("facts.md", facts)
+        self.state["facts_version"] = 2
+        self.state["acceptance_results"] = {"A1": "pass", "A3": "pass"}
+        for name in self.state["artifacts"]:
+            text = (self.arts / name).read_text(encoding="utf-8")
+            if not name.startswith("00-"):
+                text = text.replace("依据 facts v1", "依据 facts v2")
+            self.write_art(name, re.sub(r"\bA2\b", "A3", text))
 
     def truncate(self, stage):
         """退回到某阶段收尾时的样子：删掉更晚的产物（阶段 8 允许 09-bugs.md 已存在）。"""
@@ -315,12 +483,22 @@ class CheckTests(unittest.TestCase):
             (self.arts / name).unlink()
         self.state["artifacts"] = keep
         self.state["stage"] = stage
+        if stage <= 4:
+            self.state["clarification"] = clarified(stage)
+
+    def enter_settled_stage(self, stage):
+        """生命周期夹具显式模拟新阶段的澄清已完成。"""
+        self.state["stage"] = stage
+        if stage <= 4:
+            self.state["clarification"] = clarified(stage)
 
     def run_check(self):
         if self.state is not None:
             dump_state(self.af / "state.yaml", self.state)
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
+        env["HOME"] = str(self.home)
+        env["USERPROFILE"] = str(self.home)
         return subprocess.run(
             [sys.executable, str(CHECK), str(self.root)],
             capture_output=True, text=True, encoding="utf-8", env=env,
@@ -344,26 +522,578 @@ class CheckTests(unittest.TestCase):
     def write_stage0_templates(self):
         self.write_af("state.yaml", template("state.yaml"))
         self.write_af("questions.md", template("questions.md"))
-        self.write_art("00-intake.md", template("intake.md"))
 
-    def test_bundled_stage0_templates_only_wait_for_scope_signoff(self):
+    def test_bundled_stage0_templates_wait_for_clarification_not_artifacts(self):
         self.write_stage0_templates()
         result = self.run_check()
-        self.assert_blocked(result, "范围 未经用户确认")
+        self.assert_blocked(result, "澄清尚未收口")
+        self.assertNotIn("缺少必需产物", result.stdout)
+        self.assertNotIn("缺少 facts.md", result.stdout)
+        self.assertEqual(list(self.arts.iterdir()), [])
         self.assertNotIn("无法解析", result.stdout)
 
-    def test_stage0_with_scope_confirmed_passes(self):
+    def test_pending_clarification_does_not_require_question_file(self):
+        self.write_af("state.yaml", template("state.yaml"))
+        before = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        result = self.run_check()
+        self.assert_blocked(result, "澄清尚未收口")
+        self.assertNotIn("缺少 .aiflow/questions.md", result.stdout)
+        self.assertNotIn("缺少必需产物", result.stdout)
+        after = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_unrecorded_conversation_does_not_initialize_project(self):
+        root = self.root / "conversation"
+        root.mkdir()
+        result = subprocess.run(
+            [sys.executable, str(CHECK), str(root)],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assert_blocked(result)
+        self.assertNotIn("先按 templates/state.yaml 初始化", result.stdout)
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_closed_clarification_requires_recorded_questions(self):
+        self.make_full(design=False)
+        (self.af / "questions.md").unlink()
+        self.assert_blocked(self.run_check(), "缺少 .aiflow/questions.md")
+
+    def write_confirmed_stage0(self):
         self.write_stage0_templates()
         path = self.af / "state.yaml"
-        path.write_text(path.read_text(encoding="utf-8").replace("  scope: pending", "  scope: confirmed"), encoding="utf-8")
+        text = path.read_text(encoding="utf-8").replace("  scope: pending", "  scope: confirmed")
+        text = text.replace("\nartifacts: []\n", "\nartifacts:\n  - 00-intake.md\n")
+        text = text.replace("  status: pending", "  status: confirmed")
+        text = text.replace('  summary: ""', '  summary: "已展示全部范围和默认项"')
+        text = text.replace('  user_quote: ""', '  user_quote: "范围没问题"')
+        text = text.replace('  confirmed_at: ""', '  confirmed_at: "2026-11-02T10:00:00+08:00"')
+        path.write_text(text, encoding="utf-8")
+        self.write_art("00-intake.md", template("intake.md"))
         self.replace_art("00-intake.md", "- 确认结论：<已确认>", "- 确认结论：已确认")
         self.replace_art("00-intake.md", "- 用户原话：<只能来自用户本人的消息>", "- 用户原话：「范围没问题」")
         self.replace_art("00-intake.md", "- 确认时间：<YYYY-MM-DDThh:mm:ss+08:00>", "- 确认时间：2026-11-01T10:00:00+08:00")
+
+    def test_stage0_with_scope_confirmed_passes(self):
+        self.write_confirmed_stage0()
+        path = self.af / "state.yaml"
+        text = path.read_text(encoding="utf-8").replace("agent_sessions: {}", 'agent_sessions:\n  analyst: "agent:analyst"')
+        text = text.replace("stage_dispatch:\n  stage: 0", 'stage_dispatch:\n  stage: 0\n  analyst: "test-call:stage0-analyst; completed:test-result-stage0"')
+        path.write_text(text, encoding="utf-8")
         self.assert_pass(self.run_check())
+
+    def test_default_delegated_stage0_requires_analyst_after_consensus(self):
+        self.write_confirmed_stage0()
+        result = self.run_check()
+        self.assert_blocked(result, "缺少 agent_sessions.analyst")
+        self.assertNotIn("agent_sessions.pm", result.stdout)
+        self.assertNotIn("agent_sessions.fe", result.stdout)
+
+    def test_architecture_pending_clarification_does_not_demand_arch_files(self):
+        self.make_full()
+        self.truncate(3)
+        self.state["stage"] = 4
+        self.state["clarification"] = {"stage": 4, "status": "pending"}
+        (self.af / "tech-stack.md").unlink()
+        result = self.run_check()
+        self.assert_blocked(result, "澄清尚未收口")
+        self.assertNotIn("缺少必需产物", result.stdout)
+        self.assertNotIn("缺少技术栈选型文件", result.stdout)
+        self.assertEqual(self.state["signoffs"]["design"], "confirmed")
+
+    def test_research_pending_clarification_does_not_require_or_create_facts(self):
+        self.make_full()
+        self.truncate(0)
+        (self.af / "facts.md").unlink()
+        self.state["facts_version"] = 0
+        self.state["stage"] = 1
+        self.state["clarification"] = {"stage": 1, "status": "pending"}
+        result = self.run_check()
+        self.assert_blocked(result, "澄清尚未收口")
+        self.assertNotIn("缺少 facts.md", result.stdout)
+        self.assertNotIn("缺少必需产物", result.stdout)
+        self.assertFalse((self.af / "facts.md").exists())
+        self.assertFalse((self.arts / "01-research.md").exists())
+
+    def test_completed_documents_and_signoffs_cannot_bypass_clarification(self):
+        self.make_full()
+        self.state["clarification"] = {"stage": 4, "status": "pending"}
+        self.assert_blocked(self.run_check(), "澄清尚未收口")
+
+    def test_early_stages_require_current_clarification_record(self):
+        for stage in range(5):
+            with self.subTest(stage=stage):
+                self.make_full()
+                self.truncate(stage)
+                del self.state["clarification"]
+                self.assert_blocked(self.run_check(), "缺少澄清记录")
+
+    def test_previous_stage_clarification_cannot_close_new_stage(self):
+        self.make_full()
+        self.truncate(4)
+        self.state["clarification"] = clarified(3)
+        self.assert_blocked(self.run_check(), "澄清记录不属于当前阶段")
+
+    def test_confirmed_clarification_requires_summary_quote_and_time(self):
+        for key in ("summary", "user_quote", "confirmed_at"):
+            with self.subTest(field=key):
+                self.make_full()
+                self.truncate(4)
+                self.state["clarification"][key] = ""
+                self.assert_blocked(self.run_check(), "clarification." + key)
+
+    def test_clarification_confirmation_requires_valid_zoned_timestamp(self):
+        for value in (None, True, "2026-11-02", "2026-11-02T10:00:00", "2026-99-99T10:00:00+08:00"):
+            with self.subTest(value=value):
+                self.make_full()
+                self.truncate(4)
+                self.state["clarification"]["confirmed_at"] = value
+                self.assert_blocked(self.run_check(), "clarification.confirmed_at")
+
+    def test_clarification_record_rejects_invalid_shape_stage_and_status(self):
+        for record in ("confirmed", {}, {"stage": True, "status": "confirmed"},
+                       {"stage": 12, "status": "confirmed"},
+                       {"stage": 4, "status": "done"}):
+            with self.subTest(record=record):
+                self.make_full()
+                self.truncate(4)
+                self.state["clarification"] = record
+                self.assert_blocked(self.run_check(), "clarification")
+
+    def test_no_new_questions_can_use_existing_explicit_inputs(self):
+        self.make_full()
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.state["clarification"] = {
+            "stage": 4, "status": "not_needed",
+            "summary": "已确认 PRD、部署要求和开发规范覆盖本轮决策，无新增取舍",
+        }
+        self.assert_pass(self.run_check())
+
+    def test_no_new_questions_still_requires_input_rationale(self):
+        self.make_full()
+        self.truncate(4)
+        self.state["clarification"] = {"stage": 4, "status": "not_needed"}
+        self.assert_blocked(self.run_check(), "clarification.summary")
+
+    def test_answered_questions_require_explicit_shared_understanding(self):
+        self.make_full()
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.write_af("questions.md", QUESTIONS.replace("| Q1 | 0 |", "| Q1 | 4 |"))
+        self.state["clarification"] = {
+            "stage": 4, "status": "not_needed", "summary": "Q1 已回答",
+        }
+        self.assert_blocked(self.run_check(), "本阶段有澄清问题")
+        self.state["clarification"] = clarified(4)
+        self.assert_pass(self.run_check())
+
+    def test_confirmed_clarification_cannot_hide_unanswered_questions(self):
+        self.make_full()
+        self.truncate(4)
+        self.write_af("questions.md", QUESTIONS.replace("| Q1 | 0 |", "| Q1 | 4 |").replace("已解决", "待答复"))
+        self.state["pending_decisions"] = ["Q1"]
+        self.assert_blocked(self.run_check(), "问题未解决")
+
+    def test_partial_answers_leave_other_decisions_open(self):
+        self.make_full()
+        self.truncate(4)
+        self.write_af("questions.md", QUESTIONS.replace("| Q1 | 0 |", "| Q1 | 4 |") +
+                      "| Q2 | 4 | 独立部署取舍 | 部署 | — | 推荐乙 | | 待答复 | |\n")
+        self.state["clarification"] = {"stage": 4, "status": "pending"}
+        self.state["pending_decisions"] = ["Q2"]
+        result = self.run_check()
+        self.assert_blocked(result, "问题未解决，不得完成阶段 4：Q2")
+        self.assertNotIn("问题未解决，不得完成阶段 4：Q1", result.stdout)
+        self.assertEqual(self.state["pending_decisions"], ["Q2"])
+
+    def test_void_questions_do_not_force_a_new_interview(self):
+        self.make_full()
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.write_af("questions.md", QUESTIONS.replace("| Q1 | 0 |", "| Q1 | 4 |").replace(
+            "「选甲」 | 已解决 | |", " | 作废 | 已有规范给出明确要求，分叉不成立 |"))
+        self.state["clarification"] = {
+            "stage": 4, "status": "not_needed", "summary": "已有规范覆盖，不存在新取舍",
+        }
+        self.assert_pass(self.run_check())
+
+    def test_later_role_reopens_clarification_for_new_decisions(self):
+        self.make_full()
+        self.state["clarification"] = {"stage": 11, "status": "pending"}
+        self.assert_blocked(self.run_check(), "澄清尚未收口")
+        self.state["clarification"] = clarified(11)
+        self.assert_pass(self.run_check())
+
+    def test_pending_later_stage_does_not_demand_execution_roles(self):
+        self.make_full()
+        self.state["mode"] = 3
+        self.state["clarification"] = {"stage": 11, "status": "pending"}
+        result = self.run_check()
+        self.assert_blocked(result, "澄清尚未收口")
+        self.assertNotIn("agent_sessions.", result.stdout)
+        self.assertNotIn("stage_dispatch", result.stdout)
+        self.assertNotIn("独立终验尚未通过", result.stdout)
+
+    def test_later_stage_with_questions_cannot_reuse_earlier_consensus(self):
+        self.make_full()
+        self.write_af("questions.md", QUESTIONS.replace("| Q1 | 0 |", "| Q1 | 11 |"))
+        self.assert_blocked(self.run_check(), "澄清记录不属于当前阶段")
+
+    def test_legacy_later_stage_without_new_decisions_does_not_invent_history(self):
+        self.make_full()
+        del self.state["clarification"]
+        self.assert_pass(self.run_check())
+
+    def test_clarification_check_does_not_mutate_project_files(self):
+        self.make_full()
+        self.truncate(4)
+        self.state["clarification"] = {"stage": 4, "status": "pending"}
+        dump_state(self.af / "state.yaml", self.state)
+        before = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        self.assert_blocked(self.run_check(), "澄清尚未收口")
+        after = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
 
 
     def test_valid_full_project_passes(self):
         self.make_full()
+        self.assert_pass(self.run_check())
+
+    def test_architecture_requires_tech_stack_record(self):
+        self.make_full()
+        self.truncate(4)
+        (self.af / "tech-stack.md").unlink()
+        self.assert_blocked(self.run_check(), "缺少技术栈选型文件")
+
+    def test_tech_stack_must_be_locked(self):
+        self.make_full()
+        self.state["tech_stack_status"] = "pending"
+        self.assert_blocked(self.run_check(), "技术栈尚未确认锁定")
+
+    def test_legacy_project_cannot_skip_tech_stack_confirmation(self):
+        self.make_full()
+        del self.state["tech_stack_status"]
+        del self.state["tech_stack_fingerprint"]
+        self.assert_blocked(self.run_check(), "技术栈尚未确认锁定")
+
+    def test_tech_stack_lock_needs_user_confirmation(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK.replace("确认结论：已确认", "确认结论：待确认"))
+        self.assert_blocked(self.run_check(), "tech-stack.md 尚未取得用户确认")
+
+    def test_tech_stack_confirmation_needs_user_words(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK.replace("用户原话：「确认，往下走」", "用户原话："))
+        self.assert_blocked(self.run_check(), "tech-stack.md 的用户确认缺少用户原话")
+
+    def test_tech_stack_change_invalidates_lock(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK.replace("example-ui", "different-ui"))
+        self.assert_blocked(self.run_check(), "技术栈锁定指纹与当前选型不一致")
+
+    def test_tech_stack_choices_need_version_and_reason(self):
+        for old, new in (("| 1.0.0 |", "| <待定> |"), ("| 支持本轮交互 |", "| |")):
+            with self.subTest(field=old):
+                self.make_full()
+                changed = TECH_STACK.replace(old, new)
+                self.write_af("tech-stack.md", changed)
+                self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+                self.assert_blocked(self.run_check(), "技术栈选型缺少")
+
+    def test_tech_stack_recommendation_needs_alternative_tradeoff(self):
+        self.make_full()
+        changed = TECH_STACK.replace("其他方案增加迁移成本", "")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.assert_blocked(self.run_check(), "技术栈推荐缺少备选与取舍：S1")
+
+    def test_tech_stack_cannot_lock_latest(self):
+        self.make_full()
+        changed = TECH_STACK.replace("| 1.0.0 |", "| latest |")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.assert_blocked(self.run_check(), "技术栈版本范围不可判定：S1")
+
+    def test_tech_stack_choices_cannot_be_empty(self):
+        self.make_full()
+        self.write_af("tech-stack.md", "# 技术栈\n" + CONFIRM)
+        self.assert_blocked(self.run_check(), "技术栈没有有效选型")
+
+    def test_duplicate_tech_stack_choices_are_blocked(self):
+        self.make_full()
+        row = "| S1 | 前端 | example-ui | 1.0.0 | 推荐 | 支持本轮交互 | 其他方案增加迁移成本 |"
+        changed = TECH_STACK.replace(row, row + "\n" + row)
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.assert_blocked(self.run_check(), "重复技术栈选型编号：S1")
+
+    def test_duplicate_tech_stack_selection_sections_are_blocked(self):
+        self.make_full()
+        changed = TECH_STACK.replace("## 评审记录", "## 选型清单\n\n## 评审记录")
+        self.write_af("tech-stack.md", changed)
+        self.assert_blocked(self.run_check(), "必须有且只有一个「选型清单」小节")
+
+    def test_duplicate_tech_stack_confirmations_are_blocked(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK + "\n## 用户确认\n- 确认结论：待确认\n")
+        self.assert_blocked(self.run_check(), "必须有且只有一个「用户确认」小节")
+
+    def test_tech_stack_confirmation_must_be_last_section(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK + "\n## 另一个方案\n选型已变化。\n")
+        self.assert_blocked(self.run_check(), "用户确认必须是最后一个二级小节")
+
+    def test_tech_stack_review_must_be_resolved(self):
+        self.make_full()
+        changed = TECH_STACK.replace("| 已处理 |", "| 待修改 |")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.assert_blocked(self.run_check(), "tech-stack.md 评审意见未处理完")
+
+    def test_tech_stack_confirmation_needs_timestamp(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK.replace("确认时间：2026-11-01T10:00:00+08:00", "确认时间："))
+        self.assert_blocked(self.run_check(), "tech-stack.md 的用户确认缺少确认时间")
+
+    def test_relocked_tech_stack_invalidates_old_execution_log(self):
+        self.make_full()
+        changed = TECH_STACK.replace("支持本轮交互", "支持本轮交互和构建约束")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.assert_blocked(self.run_check(), "技术栈核对仍基于旧选型")
+
+    def test_tech_stack_version_range_can_have_concrete_actual_version(self):
+        self.make_full()
+        changed = TECH_STACK.replace("| 1.0.0 |", "| ^1.0.0 |")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.replace_art("06-dev-log.md", stack_fingerprint(TECH_STACK), stack_fingerprint(changed))
+        self.replace_art("06-dev-log.md", "frontend-manifest.log", "native-range-check.log：实际版本满足锁定范围")
+        self.assert_pass(self.run_check())
+
+    def test_tech_stack_user_and_standards_choices_do_not_need_alternative(self):
+        for source in ("用户指定", "开发规范"):
+            with self.subTest(source=source):
+                self.make_full()
+                changed = TECH_STACK.replace("| 推荐 |", "| %s |" % source).replace("其他方案增加迁移成本", "")
+                self.write_af("tech-stack.md", changed)
+                self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+                self.replace_art("06-dev-log.md", stack_fingerprint(TECH_STACK), stack_fingerprint(changed))
+                self.assert_pass(self.run_check())
+
+    def test_tech_stack_actual_framework_must_match_lock(self):
+        self.make_full()
+        self.replace_art("06-dev-log.md", "| S1 | example-ui |", "| S1 | different-ui |")
+        self.assert_blocked(self.run_check(), "实际技术与锁定选型不一致：S1")
+
+    def test_tech_stack_exact_version_must_match_lock(self):
+        self.make_full()
+        self.replace_art("06-dev-log.md", "| S1 | example-ui | 1.0.0 |", "| S1 | example-ui | 2.0.0 |")
+        self.assert_blocked(self.run_check(), "实际版本与锁定的精确版本不一致：S1")
+
+    def test_tech_stack_exact_version_with_prerelease_and_build_metadata(self):
+        self.make_full()
+        changed = TECH_STACK.replace("| 1.0.0 |", "| 1.0.0-rc.1+build.2 |")
+        self.write_af("tech-stack.md", changed)
+        self.state["tech_stack_fingerprint"] = stack_fingerprint(changed)
+        self.replace_art("06-dev-log.md", stack_fingerprint(TECH_STACK), stack_fingerprint(changed))
+        self.assert_blocked(self.run_check(), "实际版本与锁定的精确版本不一致：S1")
+        self.replace_art("06-dev-log.md", "| S1 | example-ui | 1.0.0 |", "| S1 | example-ui | 1.0.0-rc.1+build.2 |")
+        self.assert_pass(self.run_check())
+
+    def test_tech_stack_execution_needs_every_choice(self):
+        self.make_full()
+        self.replace_art("06-dev-log.md", "| S2 | example-api | 2.0.0 | 通过 | backend-manifest.log |", "")
+        self.assert_blocked(self.run_check(), "缺少技术栈核对记录：S2")
+
+    def test_tech_stack_execution_needs_evidence(self):
+        self.make_full()
+        self.replace_art("06-dev-log.md", "| frontend-manifest.log |", "| |")
+        self.assert_blocked(self.run_check(), "技术栈核对缺少证据：S1")
+
+    def test_tech_stack_execution_must_use_current_fingerprint(self):
+        self.make_full()
+        self.replace_art("06-dev-log.md", stack_fingerprint(TECH_STACK), "old-fingerprint")
+        self.assert_blocked(self.run_check(), "技术栈核对仍基于旧选型")
+
+    def test_duplicate_tech_stack_execution_is_blocked(self):
+        self.make_full()
+        row = "| S1 | example-ui | 1.0.0 | 通过 | frontend-manifest.log |"
+        self.replace_art("06-dev-log.md", row, row + "\n" + row)
+        self.assert_blocked(self.run_check(), "重复技术栈核对记录：S1")
+
+    def test_duplicate_tech_stack_execution_sections_are_blocked(self):
+        self.make_full()
+        path = self.arts / "06-dev-log.md"
+        self.write_art("06-dev-log.md", path.read_text(encoding="utf-8") + "\n## 技术栈核对\n核对失败。\n")
+        self.assert_blocked(self.run_check(), "开发日志必须有且只有一个「技术栈核对」小节")
+
+    def test_missing_tech_stack_does_not_block_early_stages(self):
+        self.make_full(design=False)
+        self.truncate(3)
+        (self.af / "tech-stack.md").unlink()
+        del self.state["tech_stack_status"]
+        del self.state["tech_stack_fingerprint"]
+        self.assert_pass(self.run_check())
+
+    def test_tech_stack_fingerprint_command_does_not_confirm_or_mutate(self):
+        self.make_full()
+        self.state["tech_stack_status"] = "pending"
+        dump_state(self.af / "state.yaml", self.state)
+        before = (self.af / "state.yaml").read_bytes()
+        result = subprocess.run(
+            [sys.executable, str(CHECK), str(self.root), "--tech-stack-fingerprint"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), stack_fingerprint(TECH_STACK))
+        self.assertEqual((self.af / "state.yaml").read_bytes(), before)
+
+    def test_tech_stack_fingerprint_command_rejects_invalid_proposal(self):
+        self.make_full()
+        self.write_af("tech-stack.md", TECH_STACK.replace("| 1.0.0 |", "| latest |"))
+        before = (self.af / "state.yaml").read_bytes()
+        result = subprocess.run(
+            [sys.executable, str(CHECK), str(self.root), "--tech-stack-fingerprint"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assert_blocked(result, "技术栈版本范围不可判定：S1")
+        self.assertEqual((self.af / "state.yaml").read_bytes(), before)
+
+    def test_frontend_standards_require_execution_record(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+        self.assert_blocked(self.run_check(), "缺少开发规范执行记录：FE")
+
+    def test_backend_standards_do_not_depend_on_design_required(self):
+        self.make_full(design=False)
+        self.write_af("backend-standards.md", "# 后端开发规范\n数据库访问放在仓储层。\n")
+        self.assert_blocked(self.run_check(), "缺少开发规范执行记录：BE")
+
+    def test_frontend_and_backend_standards_with_evidence_pass(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+        self.write_af("backend-standards.md", "# 后端开发规范\n数据库访问放在仓储层。\n")
+        self.write_standards_log([
+            ("FE", ".aiflow/frontend-standards.md", "通过", "lint-fe.log；已核对组件目录"),
+            ("BE", ".aiflow/backend-standards.md", "通过", "lint-be.log；已核对仓储层"),
+        ])
+        self.assert_pass(self.run_check())
+
+    def test_frontend_standards_can_be_configured_independently(self):
+        self.make_full()
+        self.state["development_standards"] = {"frontend": "", "backend": ""}
+        self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+        self.write_standards_log([("FE", ".aiflow/frontend-standards.md", "通过", "lint-fe.log")])
+        self.assert_pass(self.run_check())
+
+    def test_backend_standards_also_apply_to_jobs(self):
+        self.make_full(design=False)
+        self.replace_art("05-tasks.md", "| T1 | 后端任务 | BE |", "| T1 | 后端任务 | JOB |")
+        self.replace_art("06-dev-log.md", "| T1 | BE |", "| T1 | JOB |")
+        self.replace_art("08-test-report.md", "| T1 | BE |", "| T1 | JOB |")
+        self.write_af("backend-standards.md", "# 后端开发规范\n定时任务必须幂等。\n")
+        self.write_standards_log([("BE", ".aiflow/backend-standards.md", "通过", "job-tests.log")])
+        self.assert_pass(self.run_check())
+
+    def test_custom_markdown_standards_path_is_supported(self):
+        self.make_full()
+        self.write_af("../docs/前端规范 v1.md", "# 现有团队规范\n使用统一请求封装。\n")
+        self.state["development_standards"] = {"frontend": "docs/前端规范 v1.md"}
+        self.write_standards_log([("FE", "docs/前端规范 v1.md", "通过", "lint-fe.log")])
+        self.assert_pass(self.run_check())
+
+    def test_explicit_standards_override_project_default(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 原有规范\n原有规则。\n")
+        self.write_af("../docs/frontend.md", "# 指定规范\n使用统一请求封装。\n")
+        self.state["development_standards"] = {"frontend": "docs/frontend.md"}
+        self.write_standards_log([("FE", "docs/frontend.md", "通过", "lint-fe.log")])
+        self.assert_pass(self.run_check())
+
+    def test_missing_explicit_standards_do_not_fall_back_to_default(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 原有规范\n原有规则。\n")
+        self.state["development_standards"] = {"frontend": "docs/missing.md"}
+        self.write_standards_log([("FE", ".aiflow/frontend-standards.md", "通过", "lint-fe.log")])
+        self.assert_blocked(self.run_check(), "开发规范文件不存在或不是文件：FE")
+
+    def test_empty_development_standards_are_blocked(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", " \n")
+        self.assert_blocked(self.run_check(), "开发规范文件为空：FE")
+
+    def test_development_standards_must_be_markdown(self):
+        self.make_full()
+        self.write_af("frontend.txt", "组件按业务目录组织。\n")
+        self.state["development_standards"] = {"frontend": ".aiflow/frontend.txt"}
+        self.assert_blocked(self.run_check(), "开发规范文件必须为 Markdown：FE")
+
+    def test_development_standards_configuration_is_validated(self):
+        for config in ([], {"fronted": "docs/frontend.md"}, {"frontend": False}):
+            with self.subTest(config=config):
+                self.make_full()
+                self.state["development_standards"] = config
+                self.assert_blocked(self.run_check(), "development_standards")
+
+    def test_standards_execution_cannot_use_wrong_file(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+        self.write_af("other.md", "# 其他文件\n其他规则。\n")
+        self.write_standards_log([("FE", ".aiflow/other.md", "通过", "lint-fe.log")])
+        self.assert_blocked(self.run_check(), "开发规范执行记录与实际规范不一致：FE")
+
+    def test_standards_execution_requires_pass_and_evidence(self):
+        for conclusion, evidence in (("待检查", "lint-fe.log"), ("通过", "")):
+            with self.subTest(conclusion=conclusion, evidence=evidence):
+                self.make_full()
+                self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+                self.write_standards_log([("FE", ".aiflow/frontend-standards.md", conclusion, evidence)])
+                self.assert_blocked(self.run_check(), "开发规范自检")
+
+    def test_duplicate_standards_execution_cannot_hide_failure(self):
+        self.make_full()
+        self.write_af("frontend-standards.md", "# 前端开发规范\n组件按业务目录组织。\n")
+        self.write_standards_log([
+            ("FE", ".aiflow/frontend-standards.md", "不通过", "lint-failed.log"),
+            ("FE", ".aiflow/frontend-standards.md", "通过", "lint-fe.log"),
+        ])
+        self.assert_blocked(self.run_check(), "重复开发规范执行记录：FE")
+
+    def test_team_default_standards_are_discovered(self):
+        self.make_full()
+        self.write_af("../home/.aiflow/frontend-standards.md", "# 团队规范\n使用统一请求封装。\n")
+        self.write_standards_log([("FE", "~/.aiflow/frontend-standards.md", "通过", "lint-fe.log")])
+        self.assert_pass(self.run_check())
+
+    def test_project_standards_override_team_default(self):
+        self.make_full()
+        self.write_af("../home/.aiflow/frontend-standards.md", "# 团队规范\n团队规则。\n")
+        self.write_af("frontend-standards.md", "# 项目规范\n项目规则。\n")
+        self.write_standards_log([("FE", ".aiflow/frontend-standards.md", "通过", "lint-fe.log")])
+        self.assert_pass(self.run_check())
+
+    def test_development_standards_are_checked_before_architecture_finishes(self):
+        self.make_full(design=False)
+        self.truncate(4)
+        self.state["development_standards"] = {"backend": "docs/missing.md"}
+        self.assert_blocked(self.run_check(), "开发规范文件不存在或不是文件：BE")
+
+    def test_valid_architecture_standards_do_not_require_development_log(self):
+        self.make_full(design=False)
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.write_af("backend-standards.md", "# 后端开发规范\n数据库访问放在仓储层。\n")
+        self.assert_pass(self.run_check())
+
+    def test_missing_standards_do_not_block_stages_before_architecture(self):
+        self.make_full(design=False)
+        self.truncate(3)
+        self.state["development_standards"] = {"backend": "docs/missing.md"}
         self.assert_pass(self.run_check())
 
     def test_failed_regression_is_blocked(self):
@@ -383,8 +1113,58 @@ class CheckTests(unittest.TestCase):
     def test_confirmed_conditional_regression_passes(self):
         self.make_full()
         self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.replace_art("10-regression.md", "- 条件：无", "- 条件：仅允许内网灰度")
+        self.write_art("10-regression.md", (self.arts / "10-regression.md").read_text(encoding="utf-8") + CONFIRM)
         self.state["regression_result"] = "conditional"
         self.state["regression_conditions"] = ["仅允许内网灰度"]
+        self.state["regression_user_confirmed"] = True
+        self.assert_pass(self.run_check())
+
+    def test_conditional_regression_boolean_is_not_user_confirmation(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.replace_art("10-regression.md", "- 条件：无", "- 条件：仅允许内网灰度")
+        self.state["regression_result"] = "conditional"
+        self.state["regression_conditions"] = ["仅允许内网灰度"]
+        self.state["regression_user_confirmed"] = True
+        self.assert_blocked(self.run_check(), "10-regression.md 缺少「用户确认」小节")
+
+    def test_conditional_regression_needs_user_words(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.replace_art("10-regression.md", "- 条件：无", "- 条件：仅允许内网灰度")
+        confirmation = CONFIRM.replace("- 用户原话：「确认，往下走」", "- 用户原话：")
+        self.write_art("10-regression.md", (self.arts / "10-regression.md").read_text(encoding="utf-8") + confirmation)
+        self.state["regression_result"] = "conditional"
+        self.state["regression_conditions"] = ["仅允许内网灰度"]
+        self.state["regression_user_confirmed"] = True
+        self.assert_blocked(self.run_check(), "10-regression.md 的用户确认缺少用户原话")
+
+    def test_conditional_regression_conditions_must_match_document(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.state["regression_result"] = "conditional"
+        self.state["regression_conditions"] = ["仅允许内网灰度"]
+        self.state["regression_user_confirmed"] = True
+        self.write_art("10-regression.md", (self.arts / "10-regression.md").read_text(encoding="utf-8") + CONFIRM)
+        self.assert_blocked(self.run_check(), "回归条件与 state 不一致")
+
+    def test_conditional_regression_placeholder_condition_is_blocked(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.state["regression_result"] = "conditional"
+        self.state["regression_conditions"] = ["<待补条件>"]
+        self.state["regression_user_confirmed"] = True
+        self.write_art("10-regression.md", (self.arts / "10-regression.md").read_text(encoding="utf-8") + CONFIRM)
+        self.assert_blocked(self.run_check(), "回归条件不能为空、占位或「无」")
+
+    def test_confirmed_multiple_regression_conditions_pass(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "**结论：通过**", "**结论：有条件通过**")
+        self.replace_art("10-regression.md", "- 条件：无", "- 条件：仅允许内网灰度\n- 条件：限制为测试账号")
+        self.write_art("10-regression.md", (self.arts / "10-regression.md").read_text(encoding="utf-8") + CONFIRM)
+        self.state["regression_result"] = "conditional"
+        self.state["regression_conditions"] = ["仅允许内网灰度", "限制为测试账号"]
         self.state["regression_user_confirmed"] = True
         self.assert_pass(self.run_check())
 
@@ -407,11 +1187,155 @@ class CheckTests(unittest.TestCase):
 
     def test_closed_bug_with_real_retest_passes(self):
         self.make_full()
-        self.replace_art(
-            "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 已关闭 |\n\n### BUG-1 · 示例\n**复测结论**\n- 结论：**通过 → 已关闭**\n",
-        )
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
         self.assert_pass(self.run_check())
+
+    def test_closed_bug_needs_retest_execution_not_just_conclusion(self):
+        self.make_full()
+        self.write_bug()
+        self.assert_blocked(self.run_check(), "已关闭缺陷缺少复测记录：BUG-1")
+
+    def test_closed_bug_latest_retest_must_pass(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1"),
+                        (2, "E1", "A1", "不通过", "retest-log-2")])
+        self.assert_blocked(self.run_check(), "已关闭缺陷最近一轮复测未通过：BUG-1 → E1")
+
+    def test_retest_can_pass_after_failed_round(self):
+        self.make_full()
+        self.write_bug([(2, "E1", "A1", "通过", "retest-log-2"),
+                        (1, "E1", "A1", "不通过", "retest-log-1")])
+        self.assert_pass(self.run_check())
+
+    def test_retest_requires_evidence(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "")])
+        self.assert_blocked(self.run_check(), "复测记录缺少证据：BUG-1 → E1")
+
+    def test_retest_cannot_invent_case(self):
+        self.make_full()
+        self.write_bug([(1, "E99", "A1", "通过", "retest-log-1")])
+        self.assert_blocked(self.run_check(), "复测引用了未定义的用例：BUG-1 → E99")
+
+    def test_retest_case_cannot_be_cross_assigned(self):
+        self.make_full()
+        self.write_bug([(1, "E2", "A1", "通过", "retest-log-1")])
+        self.assert_blocked(self.run_check(), "复测用例与验收标准的关联不一致：BUG-1 → E2/A1")
+
+    def test_retest_cannot_cover_unrelated_acceptance(self):
+        self.make_full()
+        self.write_bug([(1, "E2", "A2", "通过", "retest-log-1")])
+        self.assert_blocked(self.run_check(), "复测标准不在缺陷的关联验收中：BUG-1 → A2")
+
+    def test_duplicate_retest_round_cannot_hide_failure(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "不通过", "retest-log-1"),
+                        (1, "E1", "A1", "通过", "retest-log-2")])
+        self.assert_blocked(self.run_check(), "同一轮重复复测同一用例：BUG-1 → E1 第 1 轮")
+
+    def test_duplicate_retest_sections_cannot_hide_later_failure(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+        self.write_art("09-bugs.md", (self.arts / "09-bugs.md").read_text(encoding="utf-8") + """
+#### 复测记录
+| 轮次 | 用例 | 验收标准 | 结果 | 证据 |
+|---|---|---|---|---|
+| 2 | E1 | A1 | 不通过 | retest-log-2 |
+""")
+        self.assert_blocked(self.run_check(), "缺陷存在重复的「复测记录」小节：BUG-1")
+
+    def test_duplicate_retest_conclusions_are_blocked(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+        self.write_art("09-bugs.md", (self.arts / "09-bugs.md").read_text(encoding="utf-8") +
+                       "\n#### 复测结论\n- 结论：不通过 → 打回\n")
+        self.assert_blocked(self.run_check(), "缺陷存在重复的「复测结论」小节：BUG-1")
+
+    def test_retest_round_must_be_positive_integer(self):
+        for number in ("0", "-1", "一"):
+            with self.subTest(round=number):
+                self.make_full()
+                self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+                self.replace_art("09-bugs.md", "| 1 | E1 |", "| %s | E1 |" % number)
+                self.assert_blocked(self.run_check(), "复测轮次必须是正整数")
+
+    def test_bug_owner_must_match_task_type(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")], owner="FE")
+        self.assert_blocked(self.run_check(), "缺陷归属与任务类型不一致：BUG-1")
+
+    def test_bug_cannot_link_unknown_task(self):
+        self.make_full()
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")], task="T99")
+        self.assert_blocked(self.run_check(), "缺陷关联了不存在的任务：BUG-1 → T99")
+
+    def test_failure_retest_regression_release_preserve_initial_report(self):
+        self.make_full(design=False)
+        later = {name: (self.arts / name).read_text(encoding="utf-8")
+                 for name in ("10-regression.md", "11-release.md")}
+        self.truncate(8)
+        self.fail_initial_test()
+        initial_report = (self.arts / "08-test-report.md").read_text(encoding="utf-8")
+        self.write_bug(status="待修复")
+        self.state["open_bugs"] = ["BUG-1"]
+        self.assert_pass(self.run_check())
+
+        self.state["stage"] = 9
+        self.state["open_bugs"] = []
+        self.state["acceptance_results"]["A1"] = "pass"
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+        self.assert_pass(self.run_check())
+        for stage, name in ((10, "10-regression.md"), (11, "11-release.md")):
+            self.state["stage"] = stage
+            self.state["artifacts"].append(name)
+            self.write_art(name, later[name])
+            self.assert_pass(self.run_check())
+        self.assertEqual((self.arts / "08-test-report.md").read_text(encoding="utf-8"), initial_report)
+
+    def test_stage9_cannot_promote_acceptance_without_all_case_retests(self):
+        self.make_full(design=False)
+        self.truncate(9)
+        self.fail_initial_test()
+        self.replace_art("08-test-report.md", "| A1 | E1 | 失败 |", "| A1 | E1、E3 | 失败 |")
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | E1、E3 |")
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+        self.state["acceptance_results"]["A1"] = "pass"
+        self.assert_blocked(self.run_check(), "阶段 9 验收结果缺少完整复测依据：A1")
+
+    def test_template_execution_result_column_is_accepted(self):
+        self.make_full()
+        self.replace_art("08-test-report.md", "| 验收标准 | 对应用例 | 结果 |",
+                         "| 验收标准 | 对应用例 | 执行结果 |")
+        self.assert_pass(self.run_check())
+
+    def test_stage8_mapping_case_cannot_be_cross_assigned(self):
+        self.make_full(design=False)
+        self.truncate(8)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | E2 |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| T2 | E1 |")
+        self.assert_blocked(self.run_check(), "映射表用例与验收标准的关联不一致")
+
+    def test_regression_must_execute_all_cases_for_current_acceptance(self):
+        self.make_full()
+        self.replace_art("08-test-report.md", "| A1 | E1 | 通过 |", "| A1 | E1、E3 | 通过 |")
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | E1、E3 |")
+        self.assert_blocked(self.run_check(), "全量回归未执行当前验收用例：E3")
+
+    def test_full_regression_resolves_remaining_cases_without_rewriting_initial_failure(self):
+        self.make_full(design=False)
+        self.fail_initial_test()
+        self.replace_art("08-test-report.md", "| A1 | E1 | 失败 |", "| A1 | E1、E3 | 失败 |")
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | E1、E3 |")
+        self.replace_art("10-regression.md", "| E1 | A1 | 全量验收 | 通过 | |",
+                         "| E1 | A1 | 全量验收 | 通过 | |\n| E3 | A1 | 全量验收 | 通过 | |")
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
+        self.state["acceptance_results"]["A1"] = "pass"
+        self.assert_pass(self.run_check())
+
+    def test_passed_regression_cannot_keep_documented_condition(self):
+        self.make_full()
+        self.replace_art("10-regression.md", "- 条件：无", "- 条件：仅允许内网灰度")
+        self.assert_blocked(self.run_check(), "结论为通过时不应仍挂回归条件")
 
     def test_unfinished_task_is_blocked(self):
         self.make_full()
@@ -444,6 +1368,280 @@ class CheckTests(unittest.TestCase):
         self.write_af("facts.md", (self.af / "facts.md").read_text(encoding="utf-8").replace("版本：v1", "版本：v2"))
         self.state["facts_version"] = 2
         self.assert_blocked(self.run_check(), "产物版本过期")
+
+    def test_invalidated_required_artifact_cannot_be_reused(self):
+        self.make_full()
+        self.invalidate_after(11)
+        self.state["release_status"] = "verified"
+        self.assert_blocked(self.run_check(), "必需产物已失效：11-release.md")
+
+    def test_invalidated_future_artifacts_can_remain_for_traceability(self):
+        self.make_full()
+        self.invalidate_after(3)
+        self.enter_settled_stage(2)
+        before = {path.name: path.read_bytes() for path in self.arts.glob("*.md")}
+        self.assert_pass(self.run_check())
+        self.assertEqual({path.name: path.read_bytes() for path in self.arts.glob("*.md")}, before)
+
+    def test_invalidated_confirmation_cannot_stay_confirmed(self):
+        self.make_full()
+        self.invalidate_after(3)
+        self.enter_settled_stage(2)
+        self.state["signoffs"]["design"] = "confirmed"
+        self.assert_blocked(self.run_check(), "失效产物仍保留用户确认：03-design.md")
+
+    def test_invalidation_requires_resetting_downstream_results(self):
+        for field, value, message in (
+            ("task_status", {"T1": "done"}, "失效开发产物仍保留任务状态"),
+            ("acceptance_results", {"A1": "pass"}, "失效测试报告仍保留验收结果"),
+            ("walkthrough_result", "pass", "失效走查仍保留执行结果"),
+            ("regression_result", "pass", "失效回归仍保留放行状态"),
+            ("regression_conditions", ["旧条件"], "失效回归仍保留放行状态"),
+            ("regression_user_confirmed", True, "失效回归仍保留放行状态"),
+            ("release_status", "verified", "失效发布仍保留上线状态"),
+            ("final_review_result", "pass", "失效验收仍保留独立终验"),
+            ("final_review_evidence", "old-review.log", "失效验收仍保留独立终验"),
+        ):
+            with self.subTest(field=field):
+                self.make_full()
+                self.invalidate_after(3)
+                self.enter_settled_stage(2)
+                self.state[field] = value
+                self.assert_blocked(self.run_check(), message)
+
+    def test_invalidated_artifact_names_and_list_are_validated(self):
+        for value in ("03-design.md", ["../03-design.md"], ["facts.md"], [3], ["03-design.md", "03-design.md"]):
+            with self.subTest(value=value):
+                self.make_full()
+                self.state["invalidated_artifacts"] = value
+                self.assert_blocked(self.run_check(), "invalidated_artifacts")
+
+    def test_invalidated_future_artifact_may_already_be_archived(self):
+        self.make_full()
+        self.invalidate_after(3)
+        self.enter_settled_stage(2)
+        path = self.arts / "03-design.md"
+        self.write_af("history/change-1/artifacts/03-design.md", path.read_text(encoding="utf-8"))
+        path.unlink()
+        self.state["artifacts"].remove("03-design.md")
+        self.assert_pass(self.run_check())
+
+    def test_invalidation_does_not_excuse_unregistered_files(self):
+        self.make_full()
+        self.invalidate_after(3)
+        self.enter_settled_stage(2)
+        self.state["artifacts"].remove("03-design.md")
+        self.assert_blocked(self.run_check(), "产物存在但未登记进 state.yaml：03-design.md")
+
+    def test_regression_rewind_keeps_current_initial_test_results(self):
+        self.make_full()
+        self.invalidate_after(10)
+        self.state["stage"] = 9
+        self.assertEqual(self.state["acceptance_results"], {"A1": "pass", "A2": "pass"})
+        self.assert_pass(self.run_check())
+
+    def test_invalidation_keeps_open_bugs_visible_until_migrated(self):
+        self.make_full()
+        self.write_bug(status="待修复")
+        self.state["open_bugs"] = ["BUG-1"]
+        self.invalidate_after(8)
+        self.state["stage"] = 7
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| T2 | — |")
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["open_bugs"], ["BUG-1"])
+        self.state["stage"] = 8
+        self.assert_blocked(self.run_check(), "失效缺陷单仍有未迁移的未关闭缺陷")
+        self.state["invalidated_artifacts"].remove("08-test-report.md")
+        self.state["invalidated_artifacts"].remove("09-bugs.md")
+        self.state["acceptance_results"] = {"A1": "pass", "A2": "pass"}
+        self.replace_art("04-mapping.md", "| T1 | — |", "| T1 | E1 |")
+        self.replace_art("04-mapping.md", "| T2 | — |", "| T2 | E2 |")
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["open_bugs"], ["BUG-1"])
+
+    def test_invalidating_a_bug_report_cannot_erase_unresolved_bugs(self):
+        self.make_full()
+        self.write_bug(status="待修复")
+        self.invalidate_after(8)
+        self.state["stage"] = 7
+        self.assert_blocked(self.run_check(), "未关闭问题未保留在 state.open_bugs：BUG-1")
+
+    def test_invalidated_ux_issues_are_carried_before_rewalk(self):
+        self.make_full()
+        row, detail = ux_issue("UX-1", "W3", "待复查")
+        results = [(1, "W%d" % n, "不通过" if n == 3 else "通过") for n in range(1, 11)]
+        self.write_art("07-walkthrough.md", walkthrough_doc(results, "9/10", "不通过", row + detail))
+        self.state["open_ux_issues"] = ["UX-1"]
+        self.state["walkthrough_result"] = "fail"
+        self.invalidate_after(7)
+        self.state["stage"] = 6
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| T2 | — |")
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 7
+        self.assert_blocked(self.run_check(), "失效走查仍有未迁移的未关闭问题：UX-1")
+        self.state["stage"] = 6
+        self.state["open_ux_issues"] = []
+        self.assert_blocked(self.run_check(), "未关闭问题未保留在 state.open_ux_issues：UX-1")
+
+    def test_skipped_artifact_invalidation_still_needs_disposition(self):
+        self.make_full(design=False)
+        self.state["invalidated_artifacts"] = ["03-design.md"]
+        self.assert_blocked(self.run_check(), "失效产物尚未处置：03-design.md")
+
+    def test_legacy_project_without_invalidation_list_still_passes(self):
+        self.make_full()
+        del self.state["invalidated_artifacts"]
+        self.assert_pass(self.run_check())
+
+    def test_retired_acceptance_cannot_remain_in_current_mapping(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("04-mapping.md", "| A3 | 约束二 | 服务层 | T2 | E2 |",
+                         "| A3 | 约束二 | 服务层 | T2 | E2 |\n| A2 | 旧约束 | 服务层 | T2 | E2 |")
+        self.assert_blocked(self.run_check(), "映射表包含失效或不存在的验收标准：A2")
+
+    def test_retired_acceptance_cannot_remain_in_current_contract(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.write_af("facts.md", (self.af / "facts.md").read_text(encoding="utf-8") +
+                      "| A2 | 校验 | 旧约束 |")
+        self.assert_blocked(self.run_check(), "facts 05 包含失效或不存在的验收标准：A2")
+
+    def test_retired_acceptance_cannot_remain_in_task_acceptance(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("05-tasks.md", "- 验收标准：A3", "- 验收标准：A3、A2")
+        self.assert_blocked(self.run_check(), "任务引用失效或不存在的验收标准：T2 → A2")
+
+    def test_retired_acceptance_cannot_hide_in_additional_task_field(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("05-tasks.md", "- 验收标准：A3", "- 验收标准：A3\n- 验收标准：A2")
+        self.assert_blocked(self.run_check(), "任务引用失效或不存在的验收标准：T2 → A2")
+
+    def test_retired_acceptance_cannot_remain_in_current_test_coverage(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("08-test-report.md", "| A3 | E2 | 通过 |", "| A3 | E2 | 通过 |\n| A2 | E3 | 通过 |")
+        self.assert_blocked(self.run_check(), "测试覆盖表包含失效或不存在的验收标准：A2")
+
+    def test_retired_acceptance_cannot_remain_in_current_regression(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("10-regression.md", "| E2 | A3 | 全量验收 | 通过 | |",
+                         "| E2 | A3 | 全量验收 | 通过 | |\n| E3 | A2 | 历史标准 | 通过 | |")
+        self.assert_blocked(self.run_check(), "回归执行引用失效或不存在的验收标准：A2")
+
+    def test_retired_acceptance_can_be_explained_outside_active_task_field(self):
+        self.make_full()
+        self.replace_acceptance()
+        self.replace_art("05-tasks.md", "- 验收标准：A3", "- 验收标准：A3\n- 变更说明：A2 已作废，由 A3 替代")
+        self.assert_pass(self.run_check())
+
+    def test_changed_design_requires_reconfirmation_without_facts_bump(self):
+        self.make_full()
+        self.invalidate_after(3)
+        self.enter_settled_stage(2)
+        self.assert_pass(self.run_check())
+        self.enter_settled_stage(3)
+        self.assert_blocked(self.run_check(), "必需产物已失效：03-design.md")
+        revised = DESIGN.replace("loading 后提示已受理", "loading 后展示处理人").replace(
+            "确认结论：已确认", "确认结论：待确认")
+        self.write_art("03-design.md", revised)
+        self.state["invalidated_artifacts"].remove("03-design.md")
+        self.state["signoffs"]["design"] = "confirmed"
+        self.assert_blocked(self.run_check(), "03-design.md 尚未取得用户确认")
+        self.write_art("03-design.md", revised.replace("确认结论：待确认", "确认结论：已确认").replace(
+            "用户原话：「确认，往下走」", "用户原话：「确认本轮设计修改」"))
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["facts_version"], 1)
+
+    def test_business_change_rewinds_reconfirms_and_rebuilds_through_release(self):
+        self.make_full()
+        original = {name: (self.arts / name).read_text(encoding="utf-8") for name in self.state["artifacts"]}
+        original_facts = (self.af / "facts.md").read_bytes()
+        for name, text in original.items():
+            self.write_af("history/change-1/artifacts/" + name, text)
+        shutil.copy2(self.af / "facts.md", self.af / "history/change-1/facts.md")
+        dump_state(self.af / "history/change-1/state.yaml", self.state)
+        self.replace_acceptance()
+        revised = {name: (self.arts / name).read_text(encoding="utf-8") for name in self.state["artifacts"]}
+        for name, text in original.items():
+            if int(name[:2]) >= 2:
+                self.write_art(name, text)
+        self.invalidate_after(2)
+        self.assert_blocked(self.run_check(), "必需产物已失效：02-prd.md")
+        self.state["stage"] = 11
+        self.assert_blocked(self.run_check(), "必需产物已失效：11-release.md")
+        self.enter_settled_stage(2)
+        draft = revised["02-prd.md"].replace("确认结论：已确认", "确认结论：待确认")
+        self.write_art("02-prd.md", draft)
+        self.state["invalidated_artifacts"].remove("02-prd.md")
+        self.assert_blocked(self.run_check(), "PRD 未经用户确认")
+        self.state["signoffs"]["prd"] = "confirmed"
+        self.assert_blocked(self.run_check(), "02-prd.md 尚未取得用户确认")
+
+        def restore(name):
+            text = revised[name].replace("用户原话：「确认，往下走」", "用户原话：「确认 v2 的本轮修改」").replace(
+                "确认时间：2026-11-01T10:00:00+08:00", "确认时间：2026-11-02T11:00:00+08:00")
+            self.write_art(name, text)
+            if name in self.state["invalidated_artifacts"]:
+                self.state["invalidated_artifacts"].remove(name)
+
+        restore("02-prd.md")
+        restore("02-prototype.md")
+        self.state["signoffs"]["prototype"] = "confirmed"
+        self.assert_pass(self.run_check())
+        self.enter_settled_stage(3)
+        restore("03-design.md")
+        self.state["signoffs"]["design"] = "confirmed"
+        self.assert_pass(self.run_check())
+        self.enter_settled_stage(4)
+        restore("04-arch.md")
+        restore("04-mapping.md")
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 5
+        restore("05-tasks.md")
+        self.replace_art("04-mapping.md", "| A1 | 约束一 | 数据层 | — | — |",
+                         "| A1 | 约束一 | 数据层 | T1 | — |")
+        self.replace_art("04-mapping.md", "| A3 | 约束二 | 服务层 | — | — |",
+                         "| A3 | 约束二 | 服务层 | T2 | — |")
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 6
+        restore("06-dev-log.md")
+        self.state["task_status"] = {"T1": "done", "T2": "done"}
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 7
+        restore("07-walkthrough.md")
+        self.state["walkthrough_result"] = "pass"
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 8
+        restore("08-test-report.md")
+        restore("04-mapping.md")
+        self.state["acceptance_results"] = {"A1": "pass", "A3": "pass"}
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 9
+        restore("09-bugs.md")
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 10
+        restore("10-regression.md")
+        self.state["regression_result"] = "pass"
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 11
+        self.assert_blocked(self.run_check(), "必需产物已失效：11-release.md")
+        restore("11-release.md")
+        self.replace_art("11-release.md", "release-log-123", "release-log-v2")
+        self.state["release_status"] = "verified"
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["invalidated_artifacts"], [])
+        self.assertEqual((self.af / "history/change-1/facts.md").read_bytes(), original_facts)
+        for name, text in original.items():
+            self.assertEqual((self.af / "history/change-1/artifacts" / name).read_text(encoding="utf-8"), text)
+        self.assertEqual((self.af / "tech-stack.md").read_text(encoding="utf-8"), TECH_STACK)
 
     def test_invented_acceptance_id_is_blocked(self):
         self.make_full()
@@ -516,6 +1714,238 @@ class CheckTests(unittest.TestCase):
         self.state["agent_sessions"] = {"developer": "agent:same", "tester": "agent:same"}
         self.assert_blocked(self.run_check(), "必须是独立身份")
 
+    def test_delegated_early_stages_require_current_specialist_only(self):
+        for stage, role in ((1, "analyst"), (2, "pm"), (4, "architect"), (5, "architect")):
+            with self.subTest(stage=stage):
+                self.make_full(design=False)
+                self.truncate(stage)
+                if stage == 4:
+                    self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+                    self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+                elif stage == 5:
+                    self.replace_art("04-mapping.md", "| E1 |", "| — |")
+                    self.replace_art("04-mapping.md", "| E2 |", "| — |")
+                self.state["mode"] = 2
+                self.assert_blocked(self.run_check(), "缺少 agent_sessions." + role)
+                self.state["agent_sessions"] = {role: "agent:" + role}
+                if stage == 4:
+                    self.state["agent_sessions"]["tester"] = "agent:trial-reader"
+                    self.record_dispatch("architect", "tester")
+                else:
+                    self.record_dispatch(role)
+                self.assert_pass(self.run_check())
+
+    def test_stage1_cannot_reuse_stage0_analyst_identity_as_current_dispatch(self):
+        self.make_full(design=False)
+        self.truncate(1)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:analyst-from-stage0"}
+        for dispatch in (None, {"stage": 0, "analyst": "call:stage0-analyst; completed:stage0-result"}):
+            with self.subTest(dispatch=dispatch):
+                if dispatch is not None:
+                    self.state["stage_dispatch"] = dispatch
+                self.assert_blocked(self.run_check(), "stage_dispatch")
+
+    def test_stage1_resumes_same_analyst_with_current_completion_evidence(self):
+        self.make_full(design=False)
+        self.truncate(1)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:reusable-analyst"}
+        self.state["stage_dispatch"] = {"stage": 1, "analyst": "agent:reusable-analyst"}
+        self.assert_blocked(self.run_check(), "不能只填会话 ID")
+        self.record_dispatch("analyst")
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["agent_sessions"]["analyst"], "agent:reusable-analyst")
+
+    def test_current_dispatch_requires_valid_stage_and_completed_role_record(self):
+        self.make_full(design=False)
+        self.truncate(1)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:a"}
+        for stage in (0, 2, True, "1"):
+            with self.subTest(stage=stage):
+                self.record_dispatch("analyst")
+                self.state["stage_dispatch"]["stage"] = stage
+                self.assert_blocked(self.run_check(), "stage_dispatch.stage")
+        for evidence in ("", "   ", "<dispatch-and-result>", 123, True):
+            with self.subTest(evidence=evidence):
+                self.state["stage_dispatch"] = {"stage": 1, "analyst": evidence}
+                self.assert_blocked(self.run_check(), "缺少本阶段实际派发与完成回报证据")
+        self.state["stage_dispatch"] = {"stage": 1}
+        self.assert_blocked(self.run_check(), "stage_dispatch.analyst")
+        self.record_dispatch("analyst")
+        self.assert_pass(self.run_check())
+
+    def test_pm_phase_requires_pm_dispatch_not_analyst_completion(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:a", "pm": "agent:p"}
+        self.record_dispatch("analyst")
+        self.assert_blocked(self.run_check(), "stage_dispatch.pm")
+        self.record_dispatch("pm")
+        self.assert_pass(self.run_check())
+
+    def test_architecture_needs_current_tester_trial_read(self):
+        self.make_full(design=False)
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"architect": "agent:arch", "tester": "agent:test"}
+        self.record_dispatch("architect")
+        self.assert_blocked(self.run_check(), "stage_dispatch.tester")
+        self.record_dispatch("architect", "tester")
+        self.assert_pass(self.run_check())
+
+    def test_legacy_developer_identity_does_not_replace_current_fe_be_dispatch(self):
+        self.make_full(design=False)
+        self.truncate(6)
+        self.replace_art("04-mapping.md", "| E1 |", "| — |")
+        self.replace_art("04-mapping.md", "| E2 |", "| — |")
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"developer": "agent:legacy-dev"}
+        self.record_dispatch("developer")
+        result = self.run_check()
+        self.assert_blocked(result, "stage_dispatch.fe")
+        self.assertIn("stage_dispatch.be", result.stdout)
+        self.record_dispatch("fe", "be")
+        self.assert_blocked(self.run_check(), "缺少 agent_sessions.fe")
+        self.state["agent_sessions"].update(fe="agent:legacy-dev", be="agent:legacy-dev")
+        self.assert_blocked(self.run_check(), "fe 与 be 必须是独立身份")
+        self.state["agent_sessions"]["be"] = "agent:backend"
+        self.assert_pass(self.run_check())
+
+    def test_current_fe_dispatch_requires_role_identity_even_with_legacy_developer(self):
+        self.make_full(design=False)
+        self.truncate(6)
+        self.replace_art("04-mapping.md", "| E1 |", "| — |")
+        self.replace_art("04-mapping.md", "| E2 |", "| — |")
+        self.replace_art("05-tasks.md", "| BE |", "| FE |")
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"developer": "agent:resumed"}
+        self.record_dispatch("fe")
+        self.assert_blocked(self.run_check(), "缺少 agent_sessions.fe")
+        self.state["agent_sessions"]["fe"] = "agent:resumed"
+        self.assert_pass(self.run_check())
+
+    def test_bug_repair_requires_current_owner_dispatch_and_tester_return(self):
+        for owner, task, example, standard, role, absent in (("BE", "T1", "E1", "A1", "be", "fe"),
+                                                           ("FE", "T2", "E2", "A2", "fe", "be")):
+            with self.subTest(owner=owner):
+                self.make_full(design=False)
+                self.truncate(9)
+                self.write_bug([(1, example, standard, "通过", "test-only-retest-log")], task=task,
+                               owner=owner, standard=standard)
+                self.state["mode"] = 2
+                self.state["agent_sessions"] = {"developer": "agent:dev", "tester": "agent:test"}
+                self.record_dispatch("tester")
+                result = self.run_check()
+                self.assert_blocked(result, "stage_dispatch." + role)
+                self.assertNotIn("stage_dispatch." + absent, result.stdout)
+                self.record_dispatch(role, "tester")
+                self.assert_blocked(self.run_check(), "缺少 agent_sessions." + role)
+                self.state["agent_sessions"][role] = "agent:dev"
+                self.assert_pass(self.run_check())
+
+    def test_delegated_design_requires_separate_author_and_reviewer(self):
+        self.make_full()
+        self.truncate(3)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"designer": "agent:ux"}
+        self.assert_blocked(self.run_check(), "缺少 agent_sessions.design_reviewer")
+        self.state["agent_sessions"]["design_reviewer"] = "agent:ux"
+        self.assert_blocked(self.run_check(), "必须是独立身份")
+        self.state["agent_sessions"]["design_reviewer"] = "agent:review"
+        self.record_dispatch("designer", "design_reviewer")
+        self.assert_pass(self.run_check())
+
+    def test_delegated_no_design_does_not_require_design_sessions(self):
+        self.make_full(design=False)
+        self.truncate(3)
+        self.state["mode"] = 2
+        self.assert_pass(self.run_check())
+
+    def test_delegated_task_types_select_required_developers(self):
+        for kind, role, absent in (("FE", "fe", "be"), ("BE", "be", "fe"), ("JOB", "be", "fe")):
+            with self.subTest(kind=kind):
+                self.make_full(design=False)
+                self.truncate(6)
+                self.replace_art("04-mapping.md", "| E1 |", "| — |")
+                self.replace_art("04-mapping.md", "| E2 |", "| — |")
+                self.replace_art("05-tasks.md", "| BE |", "| " + kind + " |")
+                self.replace_art("05-tasks.md", "| FE |", "| " + kind + " |")
+                self.state["mode"] = 2
+                result = self.run_check()
+                self.assert_blocked(result, "缺少 agent_sessions." + role)
+                self.assertNotIn("缺少 agent_sessions." + absent, result.stdout)
+                self.assertNotIn("缺少 agent_sessions.tester", result.stdout)
+                self.state["agent_sessions"] = {role: "agent:" + role}
+                self.record_dispatch(role)
+                self.assert_pass(self.run_check())
+
+    def test_delegated_mixed_tasks_require_both_developers(self):
+        self.make_full(design=False)
+        self.truncate(6)
+        self.replace_art("04-mapping.md", "| E1 |", "| — |")
+        self.replace_art("04-mapping.md", "| E2 |", "| — |")
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"fe": "agent:fe"}
+        self.assert_blocked(self.run_check(), "缺少 agent_sessions.be")
+        self.state["agent_sessions"]["be"] = "agent:be"
+        self.record_dispatch("fe", "be")
+        self.assert_pass(self.run_check())
+
+    def test_delegated_roles_cannot_share_context(self):
+        self.make_full()
+        self.state["mode"] = 2
+        sessions = {role: "agent:" + role for role in
+                    ("analyst", "pm", "designer", "architect", "fe", "be", "tester", "operator")}
+        for first, second in (("analyst", "pm"), ("fe", "be"), ("fe", "tester"),
+                              ("be", "designer"), ("architect", "operator")):
+            with self.subTest(first=first, second=second):
+                self.state["agent_sessions"] = dict(sessions)
+                self.state["agent_sessions"][second] = sessions[first]
+                self.assert_blocked(self.run_check(), "必须是独立身份")
+        self.state["agent_sessions"] = sessions
+        self.record_dispatch("operator")
+        self.assert_pass(self.run_check())
+
+    def test_delegated_later_stages_require_tester_and_operator_when_due(self):
+        for stage, role in ((7, "designer"), (8, "tester"), (9, "tester"), (10, "tester"), (11, "operator")):
+            with self.subTest(stage=stage):
+                self.make_full()
+                self.truncate(stage)
+                if stage == 7:
+                    self.replace_art("04-mapping.md", "| E1 |", "| — |")
+                    self.replace_art("04-mapping.md", "| E2 |", "| — |")
+                self.state["mode"] = 2
+                sessions = {"fe": "agent:fe", "be": "agent:be", "designer": "agent:ux", "tester": "agent:test"}
+                sessions.pop(role, None)
+                self.state["agent_sessions"] = sessions
+                self.assert_blocked(self.run_check(), "缺少 agent_sessions." + role)
+                sessions[role] = "agent:" + role
+                self.record_dispatch(role)
+                self.assert_pass(self.run_check())
+
+    def test_delegated_legacy_developer_identity_remains_usable(self):
+        self.make_full(design=False)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"developer": "agent:dev", "tester": "agent:test", "operator": "agent:ops"}
+        self.record_dispatch("operator")
+        self.assert_pass(self.run_check())
+        self.state["agent_sessions"]["fe"] = "agent:dev"
+        self.assert_pass(self.run_check())
+
+    def test_delegated_invalid_session_values_are_blocked(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        for value in (True, 123, "<agent-id>", "..."):
+            with self.subTest(value=value):
+                self.state["agent_sessions"] = {"pm": value}
+                self.assert_blocked(self.run_check(), "agent_sessions.pm")
+
     def test_stage4_cannot_invent_future_task_or_case(self):
         self.make_full()
         self.truncate(4)
@@ -582,10 +2012,20 @@ class CheckTests(unittest.TestCase):
     def test_mode3_with_final_review_passes(self):
         self.make_full()
         self.state["mode"] = 3
-        self.state["agent_sessions"] = {"developer": "agent:dev", "designer": "agent:ux", "tester": "agent:test", "final_reviewer": "human:reviewer"}
+        self.state["agent_sessions"] = {"developer": "agent:dev", "designer": "agent:ux", "tester": "agent:test", "operator": "agent:ops", "final_reviewer": "human:reviewer"}
         self.state["final_review_result"] = "pass"
         self.state["final_review_evidence"] = "review-record-123"
+        self.record_dispatch("operator")
         self.assert_pass(self.run_check())
+
+    def test_mode3_final_reviewer_must_differ_from_all_recorded_roles(self):
+        self.make_full(design=False)
+        self.state["mode"] = 3
+        self.state["agent_sessions"] = {"fe": "agent:fe", "be": "agent:be", "tester": "agent:test",
+                                        "operator": "model:ops", "final_reviewer": "model:ops"}
+        self.state["final_review_result"] = "pass"
+        self.state["final_review_evidence"] = "review-record-123"
+        self.assert_blocked(self.run_check(), "final_reviewer 必须独立于全部执行角色")
 
     def test_release_plan_is_not_success(self):
         self.make_full()
@@ -618,6 +2058,18 @@ class CheckTests(unittest.TestCase):
         self.state["pending_decisions"] = ["Q2"]
         self.assert_blocked(self.run_check(), "问题未解决，不得完成阶段 11：Q2")
 
+    def test_research_notes_do_not_change_question_ledger(self):
+        self.make_full(design=False)
+        questions = QUESTIONS + "| Q2 | 2 | 删除后如何恢复 | A1 | Q1 | 推荐 B | 「选 B」 | 已解决 | 依据见调研记录 |\n"
+        self.write_af("questions.md", questions + RESEARCH_NOTES)
+        self.assert_pass(self.run_check())
+
+    def test_researched_recommendation_still_needs_user_answer(self):
+        self.make_full(design=False)
+        questions = QUESTIONS + "| Q2 | 2 | 删除后如何恢复 | A1 | Q1 | 推荐 B | | 按推荐 | 依据见调研记录 |\n"
+        self.write_af("questions.md", questions + RESEARCH_NOTES)
+        self.assert_blocked(self.run_check(), "没有用户答复原话：Q2")
+
     def test_pending_decisions_must_mirror_questions(self):
         self.make_full()
         self.write_af("questions.md", QUESTIONS + "| Q2 | 2 | 新问题 | A1 | Q1 | 推荐乙 | | 待答复 | |\n")
@@ -635,6 +2087,7 @@ class CheckTests(unittest.TestCase):
 
     def test_design_must_cover_every_prototype_page(self):
         self.make_full()
+        self.confirm_design_images(("P1", "P2"))
         self.replace_art("02-prototype.md", "| P1 | 列表页 | 查看与操作 | A1、A2 | prototype/P1.html |",
                          "| P1 | 列表页 | 查看与操作 | A1、A2 | prototype/P1.html |\n| P2 | 详情页 | 查看详情 | A1 | prototype/P1.html |")
         self.replace_art("02-prototype.md", "- 字段：编号、状态\n", "- 字段：编号、状态\n\n### P2 · 详情页\n- 字段：编号\n")
@@ -655,6 +2108,11 @@ class CheckTests(unittest.TestCase):
     def test_design_selfcheck_conclusion_must_pass(self):
         self.make_full()
         self.replace_art("03-design.md", "- 结论：通过\n", "- 结论：<待独立评审后填写>\n")
+        self.assert_blocked(self.run_check(), "设计稿自检结论不是「通过」")
+
+    def test_design_selfcheck_pass_prefix_is_not_a_pass(self):
+        self.make_full()
+        self.replace_art("03-design.md", "- 结论：通过\n", "- 结论：通过，但尚未完成独立评审\n")
         self.assert_blocked(self.run_check(), "设计稿自检结论不是「通过」")
 
     def test_design_selfcheck_open_issue_is_blocked(self):
@@ -739,16 +2197,303 @@ class CheckTests(unittest.TestCase):
         self.replace_art("03-design.md", "| W2 | P1 | 交互 | I1 按标注实现 | 是 |", "| W2 | P1 | 交互 | 按钮可点击 | 是 |")
         self.assert_blocked(self.run_check(), "交互标注没有被任何走查点覆盖：I1")
 
+    def test_interaction_fields_must_be_filled(self):
+        for row in (
+            "| I1 | P1 | <待填写> | loading 后提示已受理 |",
+            "| I1 | P1 | 点击受理 | |",
+        ):
+            with self.subTest(row=row):
+                self.make_full()
+                self.replace_art("03-design.md", "| I1 | P1 | 点击受理 | loading 后提示已受理 |", row)
+                self.assert_blocked(self.run_check(), "交互标注缺少")
+
+    def test_checkpoint_cannot_invent_interaction(self):
+        self.make_full()
+        self.replace_art("03-design.md", "I1 按标注实现", "I1、I99 按标注实现")
+        self.assert_blocked(self.run_check(), "走查点引用了未定义的交互标注：W2 → I99")
+
+    def test_checkpoint_cannot_cover_another_pages_interaction(self):
+        self.make_full()
+        self.truncate(3)
+        self.write_af("design/P2.html", "<html></html>")
+        self.replace_art("03-design.md", "| P1 | 列表页 | design/P1.html |",
+                         "| P1 | 列表页 | design/P1.html |\n| P2 | 详情页 | design/P2.html |")
+        self.replace_art("03-design.md", "| W2 | P1 | 交互 | I1 按标注实现 | 是 |",
+                         "| W2 | P2 | 交互 | I1 按标注实现 | 是 |")
+        self.assert_blocked(self.run_check(), "走查点与交互标注页面不一致：W2(P2) → I1(P1)")
+
+    def test_interaction_checkpoint_must_be_key(self):
+        self.make_full()
+        self.replace_art("03-design.md", "| W2 | P1 | 交互 | I1 按标注实现 | 是 |",
+                         "| W2 | P1 | 交互 | I1 按标注实现 | 否 |")
+        self.assert_blocked(self.run_check(), "交互走查点必须标为关键项：W2")
+
+    def test_layout_checkpoint_is_required_for_every_page(self):
+        self.make_full()
+        self.replace_art("03-design.md", "| W10 | P1 | 版式 |", "| W10 | P1 | 间距 |")
+        self.assert_blocked(self.run_check(), "页面没有通用版式走查点：P1")
+
+    def test_layout_checkpoint_must_be_key(self):
+        self.make_full()
+        self.replace_art("03-design.md",
+                         "| W10 | P1 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 是 |",
+                         "| W10 | P1 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 否 |")
+        self.assert_blocked(self.run_check(), "通用版式走查点必须标为关键项：W10")
+
+    def test_second_page_cannot_reuse_first_pages_layout_checkpoint(self):
+        self.make_full()
+        self.truncate(3)
+        self.write_af("design/P2.html", "<html></html>")
+        self.replace_art("03-design.md", "| P1 | 列表页 | design/P1.html |",
+                         "| P1 | 列表页 | design/P1.html |\n| P2 | 详情页 | design/P2.html |")
+        self.replace_art("03-design.md", "| W1 | P1 | 页面 | 从主流程能到达本页 | 是 |",
+                         "| W1 | P1 | 页面 | 从主流程能到达本页 | 是 |\n"
+                         "| W11 | P2 | 页面 | 从列表页能到达本页 | 是 |")
+        self.assert_blocked(self.run_check(), "页面没有通用版式走查点：P2")
+
+    def test_valid_multipage_design_passes(self):
+        self.make_full()
+        self.truncate(3)
+        self.confirm_design_images(("P1", "P2"))
+        self.write_af("design/P2.html", "<html></html>")
+        self.replace_art("03-design.md", "| P1 | 列表页 | design/P1.html |",
+                         "| P1 | 列表页 | design/P1.html |\n| P2 | 详情页 | design/P2.html |")
+        self.replace_art("03-design.md", "| W10 | P1 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 是 |",
+                         "| W10 | P1 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 是 |\n"
+                         "| W11 | P2 | 版式 | layout-check.js 和 spec-check.js 输出为空 | 是 |")
+        self.replace_art("03-design.md", "| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |",
+                         "| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |\n| P2 | V2 | design/img/P2.png | 通过 | 已核对间距与状态 |")
+        self.assert_pass(self.run_check())
+
     def test_designer_must_differ_from_developer(self):
         self.make_full()
         self.state["mode"] = 2
         self.state["agent_sessions"] = {"developer": "agent:dev", "designer": "agent:dev", "tester": "agent:test"}
         self.assert_blocked(self.run_check(), "designer 与 developer 必须是独立身份")
 
+    def test_image_pending_waits_without_html_or_reviewer_demands(self):
+        self.make_full()
+        self.truncate(3)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"designer": "agent:ux"}
+        self.state["design_image_status"] = "pending"
+        self.state["design_image_fingerprint"] = ""
+        self.state["signoffs"]["design"] = "confirmed"
+        self.state["artifacts"].remove("03-design.md")
+        (self.arts / "03-design.md").unlink()
+        (self.af / "design-images.md").unlink()
+        dump_state(self.af / "state.yaml", self.state)
+        before = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        result = self.run_check()
+        self.assert_blocked(result, "先生成图片并请用户确认")
+        for message in ("缺少必需产物", "03-design.md", "设计稿自检", "design_reviewer", "stage_dispatch", "signoffs.design"):
+            self.assertNotIn(message, result.stdout)
+        after = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_stage3_cannot_use_legacy_fields_to_skip_image_review(self):
+        self.make_full()
+        self.truncate(3)
+        for status in (None, "skipped", "done", True):
+            with self.subTest(status=status):
+                self.state["design_image_status"] = status
+                self.assert_blocked(self.run_check(), "design_image_status 必须为 confirmed")
+        self.state.pop("design_image_status")
+        self.state.pop("design_image_fingerprint")
+        self.assert_blocked(self.run_check(), "design_image_status 必须为 confirmed")
+
+    def test_confirmed_image_requires_provenance_and_valid_local_raster(self):
+        for issue in ("no-source", "screenshot-source", "missing-file", "invalid-image", "outside-path", "no-manifest"):
+            with self.subTest(issue=issue):
+                self.make_full()
+                self.truncate(3)
+                path = self.af / "design-images.md"
+                body = path.read_text(encoding="utf-8")
+                if issue == "no-source":
+                    path.write_text(body.replace("test-only-imagegen-call-1", ""), encoding="utf-8")
+                    message = "缺少图像工具调用证据"
+                elif issue == "screenshot-source":
+                    path.write_text(body.replace("图像生成", "HTML截图"), encoding="utf-8")
+                    message = "不能用 HTML 截图"
+                elif issue == "missing-file":
+                    (self.af / "design-images/P1.png").unlink()
+                    message = "已存在的图片文件"
+                elif issue == "invalid-image":
+                    (self.af / "design-images/P1.png").write_bytes(b"not a raster")
+                    message = "不是有效的非空"
+                elif issue == "outside-path":
+                    (self.root / "outside.png").write_bytes(png_bytes((1, 2, 3)))
+                    path.write_text(body.replace("design-images/P1.png", "../outside.png"), encoding="utf-8")
+                    message = ".aiflow 内已存在"
+                else:
+                    path.unlink()
+                    message = "缺少设计图片清单"
+                self.assert_blocked(self.run_check(), message)
+
+    def test_image_confirmation_requires_user_quote_zoned_time_and_resolved_feedback(self):
+        self.make_full()
+        self.truncate(3)
+        path = self.af / "design-images.md"
+        original = path.read_text(encoding="utf-8")
+        edits = (("用户原话：「确认，往下走」", "用户原话：", "缺少真实用户原话"),
+                 ("2026-11-01T10:00:00+08:00", "2026-11-01", "含时区"),
+                 ("2026-11-01T10:00:00+08:00", "2026-02-30T10:00:00+08:00", "含时区"),
+                 ("确认结论：已确认", "确认结论：待确认", "尚未取得唯一明确"),
+                 ("| 已处理 |", "| 待修改 |", "评审意见未处理完"))
+        for old, new, message in edits:
+            with self.subTest(new=new):
+                path.write_text(original.replace(old, new), encoding="utf-8")
+                self.assert_blocked(self.run_check(), message)
+        path.write_text(original, encoding="utf-8")
+        self.assert_pass(self.run_check())
+
+    def test_image_manifest_rejects_duplicate_ids_and_invalid_coverage(self):
+        self.make_full()
+        self.truncate(3)
+        path = self.af / "design-images.md"
+        original = path.read_text(encoding="utf-8")
+        row = "| V1 | P1 | design-images/P1.png | 图像生成 | test-only-imagegen-call-1 |"
+        for replacement, message in ((row + "\n" + row, "重复设计图片编号"),
+                                     (row.replace("| P1 |", "| 首页 |"), "覆盖页面必须列出 P 编号"),
+                                     (row.replace("| V1 |", "| first |"), "图片编号必须为 V")):
+            with self.subTest(message=message):
+                path.write_text(original.replace(row, replacement), encoding="utf-8")
+                self.assert_blocked(self.run_check(), message)
+
+    def test_image_replacement_invalidates_approval_even_at_same_filename(self):
+        self.make_full()
+        self.truncate(3)
+        before = self.state["design_image_fingerprint"]
+        (self.af / "design-images/P1.png").write_bytes(png_bytes((200, 12, 40)))
+        after = self.image_fingerprint_command()
+        self.assertEqual(after.returncode, 0, after.stdout)
+        self.assertNotEqual(after.stdout.strip(), before)
+        self.assert_blocked(self.run_check(), "设计图片确认指纹与当前图片不一致")
+
+    def test_image_fingerprint_binds_manifest_and_ignores_review_text(self):
+        self.make_full()
+        path = self.af / "design-images.md"
+        original = path.read_text(encoding="utf-8")
+        baseline = self.image_fingerprint_command().stdout.strip()
+        path.write_text(original.replace("示例反馈", "另一条反馈"), encoding="utf-8")
+        self.assertEqual(self.image_fingerprint_command().stdout.strip(), baseline)
+        path.write_text(original.replace("| P1 |", "| P1 / P2 |"), encoding="utf-8")
+        self.assertNotEqual(self.image_fingerprint_command().stdout.strip(), baseline)
+
+    def test_design_image_fingerprint_command_is_read_only_and_does_not_confirm(self):
+        self.write_design_images()
+        path = self.af / "design-images.md"
+        path.write_text(path.read_text(encoding="utf-8").split("## 评审记录", 1)[0], encoding="utf-8")
+        before = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        result = self.image_fingerprint_command()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertRegex(result.stdout.strip(), r"^[0-9a-f]{64}$")
+        after = {p.relative_to(self.af): p.read_bytes() for p in self.af.rglob("*") if p.is_file()}
+        self.assertEqual(before, after)
+        self.assertFalse((self.af / "state.yaml").exists())
+
+    def test_approved_images_unlock_normal_html_and_user_confirmation_gates(self):
+        self.make_full()
+        self.truncate(3)
+        (self.arts / "03-design.md").unlink()
+        self.state["artifacts"].remove("03-design.md")
+        self.assert_blocked(self.run_check(), "缺少必需产物：03-design.md")
+        self.write_art("03-design.md", DESIGN)
+        self.state["artifacts"].append("03-design.md")
+        self.state["signoffs"]["design"] = "pending"
+        self.assert_blocked(self.run_check(), "设计稿 未经用户确认")
+        self.state["signoffs"]["design"] = "confirmed"
+        self.assert_pass(self.run_check())
+
+    def test_html_image_comparison_requires_coverage_result_and_evidence(self):
+        self.make_full()
+        self.truncate(3)
+        row = "| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |"
+        original = (self.arts / "03-design.md").read_text(encoding="utf-8")
+        for replacement, message in (("", "缺少图片还原核对"),
+                                     (row.replace("| V1 |", "| V9 |"), "基准图未覆盖页面"),
+                                     (row.replace("| 通过 |", "| 待核对 |"), "图片还原核对尚未通过"),
+                                     (row.replace("无偏差", ""), "缺少差异与处理"),
+                                     (row.replace("design/img/P1.png", "design/img/missing.png"), "已存在的图片文件")):
+            with self.subTest(message=message):
+                self.write_art("03-design.md", original.replace(row, replacement))
+                self.assert_blocked(self.run_check(), message)
+        self.write_art("03-design.md", original)
+        self.assert_pass(self.run_check())
+
+    def test_modern_design_requires_real_nonempty_html_artifact(self):
+        self.make_full()
+        self.truncate(3)
+        original = (self.arts / "03-design.md").read_text(encoding="utf-8")
+        (self.af / "design/empty.html").write_text("  \n", encoding="utf-8")
+        for target in ("design-images/P1.png", "design", "design/empty.html"):
+            with self.subTest(target=target):
+                self.write_art("03-design.md", original.replace("design/P1.html", target))
+                self.assert_blocked(self.run_check(), "必须是项目内非空 HTML 文件")
+        self.write_art("03-design.md", original)
+        self.assert_pass(self.run_check())
+
+    def test_html_screenshot_cannot_be_the_approved_baseline(self):
+        self.make_full()
+        self.truncate(3)
+        self.replace_art("03-design.md", "design/img/P1.png", "design-images/P1.png")
+        self.assert_blocked(self.run_check(), "不能复用基准图")
+        self.replace_art("03-design.md", "design-images/P1.png", "design/img/P1.png")
+        (self.af / "design/img/P1.png").write_bytes((self.af / "design-images/P1.png").read_bytes())
+        self.assert_blocked(self.run_check(), "相同图片内容")
+
+    def test_html_comparison_allows_viewports_and_blocks_any_failed_viewport(self):
+        self.make_full()
+        self.truncate(3)
+        (self.af / "design/img/P1-mobile.png").write_bytes(png_bytes((230, 70, 50)))
+        desktop = "| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |"
+        mobile = "| P1 | V1 | design/img/P1-mobile.png | 通过 | 手机布局已核对 |"
+        self.replace_art("03-design.md", desktop, desktop + "\n" + mobile)
+        self.assert_pass(self.run_check())
+        self.replace_art("03-design.md", mobile, mobile.replace("| 通过 |", "| 不通过 |"))
+        self.assert_blocked(self.run_check(), "图片还原核对尚未通过：P1")
+
+    def test_html_comparison_cannot_duplicate_screenshot_as_another_viewport(self):
+        self.make_full()
+        self.truncate(3)
+        row = "| P1 | V1 | design/img/P1.png | 通过 | 无偏差 |"
+        self.replace_art("03-design.md", row, row + "\n" + row.replace("无偏差", "手机视口已核对"))
+        self.assert_blocked(self.run_check(), "重复使用同一页面的 HTML 截图")
+
+    def test_approved_images_must_cover_known_prototype_pages_before_html(self):
+        self.make_full()
+        self.truncate(3)
+        self.replace_art("02-prototype.md", "| P1 | 列表页 | 查看与操作 | A1、A2 | prototype/P1.html |",
+                         "| P1 | 列表页 | 查看与操作 | A1、A2 | prototype/P1.html |\n| P2 | 详情页 | 查看详情 | A1 | prototype/P1.html |")
+        result = self.run_check()
+        self.assert_blocked(result, "已确认设计图片未覆盖原型页面：P2")
+        self.assertNotIn("设计稿未覆盖原型页面", result.stdout)
+
+    def test_no_design_requires_skipped_image_status_for_new_records(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["design_image_status"] = "pending"
+        self.assert_blocked(self.run_check(), "design_image_status 必须为 skipped")
+        self.state["design_image_status"] = "skipped"
+        self.assert_pass(self.run_check())
+
+    def test_legacy_completed_html_projects_do_not_invent_image_approval(self):
+        for design in (True, False):
+            with self.subTest(design=design):
+                if not design:
+                    for name in DESIGN_NAMES:
+                        (self.arts / name).unlink(missing_ok=True)
+                self.make_full(design=design)
+                self.state.pop("design_image_status")
+                self.state.pop("design_image_fingerprint")
+                if design:
+                    (self.af / "design-images.md").unlink()
+                    self.replace_art("03-design.md", IMAGE_COMPARISON, "")
+                self.assert_pass(self.run_check())
+
     def test_closed_fe_bug_requires_design_recheck(self):
         self.make_full()
-        self.replace_art("09-bugs.md", "|---|---|---|---|---|\n",
-                         "|---|---|---|---|---|\n| BUG-1 | 示例 | T2 | FE | 已关闭 |\n\n### BUG-1 · 示例\n**复测结论**\n- 结论：**通过 → 已关闭**\n")
+        self.write_bug([(1, "E2", "A2", "通过", "retest-log-1")], task="T2", owner="FE", standard="A2")
         self.assert_blocked(self.run_check(), "回归缺少通过的「设计还原复核」")
         self.replace_art("10-regression.md", "## 四、结论\n", "## 四、设计还原复核\n- 复核结论：通过\n\n## 五、结论\n")
         self.assert_pass(self.run_check())

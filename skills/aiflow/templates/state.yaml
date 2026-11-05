@@ -3,14 +3,30 @@ flow_version: 2
 project: "未命名项目"
 stage: 0
 expert: analyst
-mode: 1
+# 新项目默认子智能体模式；环境不支持或用户选择角色切换时用 1，并如实说明原因。
+mode: 2
 facts_version: 0
-artifacts:
-  - 00-intake.md
+artifacts: []
+
+# 阶段 0–4 每进入新阶段重置为该阶段 pending；阶段 5–11 发现新分叉时同样重置。
+# confirmed 需共识摘要、用户真实确认原话和时间；not_needed 需已知输入来源与理由。
+# 新项目收口后才创建本文件；已有项目新一轮访谈设 pending。详见 references/clarification-records.md。
+clarification:
+  stage: 0
+  status: pending
+  summary: ""
+  user_quote: ""
+  confirmed_at: ""
+
+# 回退或变更后，登记已生成但尚未完成影响复核的产物名。默认空，规则见 references/change.md。
+# 文件可暂留 artifacts/ 作追溯，或归档后从 artifacts 列表移除；失效项不作为当前输入。
+# 当前阶段必需的失效项会阻塞；完成重做、复核及必要用户确认后，逐项移出此列表。
+invalidated_artifacts: []
+
 open_bugs: []
 open_ux_issues: []
 
-# questions.md 中「待问 / 待答复」的编号，与台账保持一致。
+# 已落档 questions.md 中「待问 / 待答复」的编号；不要求为每轮对话同步写文件。
 pending_decisions: []
 
 # 用户确认：pending / confirmed / skipped。只有用户本人明确确认才能写 confirmed。
@@ -26,16 +42,35 @@ signoffs:
 prototype_required: null
 design_required: null
 
+# 阶段 3：先生成图片并获用户确认，再制作 HTML；不需要设计时设 skipped。
+# 图片版本和真实反馈在 design-images.md，确认后用 --design-image-fingerprint 计算指纹。
+design_image_status: pending
+design_image_fingerprint: ""
+
+# 可选开发规范，阶段 4 前确定。相对路径以项目根目录为基准，也支持绝对路径与 ~/。
+# 空字符串时依次查项目 .aiflow/、团队 ~/.aiflow/ 下的 frontend-standards.md / backend-standards.md。
+# 发现规范后登记实际路径；都没有则沿用项目现状，不要求新增规范。
+development_standards:
+  frontend: ""
+  backend: ""
+
+# 阶段 4：用户确认 .aiflow/tech-stack.md 的具体选型后，生成指纹并设 locked；此前为 pending。
+# 更换技术或超出已锁定版本范围时改回 pending、清空指纹，重新确认；不能只更新指纹绕过评审。
+tech_stack_status: pending
+tech_stack_fingerprint: ""
+
 # 阶段 6 起登记：T1: done / partial / pending。进入阶段 7 前必须全部 done。
 task_status: {}
 
 # 阶段 7 起登记：pass / fail / not_run；不需要设计稿时为 skipped。
 walkthrough_result: not_run
 
-# 阶段 8 起登记：A1: pass / fail / uncovered。完成阶段 8 时不得有 uncovered；回归完成时全部 pass。
+# 阶段 8 起登记：A1: pass / fail / uncovered。初测结果留在 08-test-report.md，不覆盖。
+# 阶段 9 从已关闭缺陷的有效复测更新；同一 A 的初测用例未全部复测时，不能提前标 pass。
+# 阶段 10 以全量回归结果更新，收尾时全部 pass；任何阶段都不得有 uncovered。
 acceptance_results: {}
 
-# 阶段 10 起登记。conditional 必须同时填写条件并取得用户显式确认。
+# 阶段 10 起登记。conditional 的条件逐项对应回归文档的「条件」行，并在文档记录用户原话和确认时间。
 regression_result: not_run
 regression_conditions: []
 regression_user_confirmed: false
@@ -43,9 +78,14 @@ regression_user_confirmed: false
 # 阶段 11 起登记：planned / deployed / verified / rolled_back。只有 verified 算上线完成。
 release_status: planned
 
-# 模式 2/3 记录 developer、designer、tester；阶段 9 用原 developer ID 恢复开发会话。
-# 模式 3 另需 final_reviewer（可填 human:<姓名> 或 model:<名称>）及独立终验证据。
+# 模式 2/3 按实际派工记录 analyst、pm、designer、architect、fe、be、tester、operator 的真实会话 ID。
+# 阶段 3 另需独立 design_reviewer；模式 3 另需 final_reviewer 及独立终验证据。
+# 同角色后续任务优先恢复原 ID；旧项目 developer 兼容保留，详见 references/orchestration.md。
 agent_sessions: {}
+# 当前阶段派工完成依据；进新阶段/重做时重置，收到角色真实返回后再添加角色键。
+# 例如 analyst: "本阶段派工调用 …；完成返回 …；产出 …"；不能只填旧会话 ID。
+stage_dispatch:
+  stage: 0
 final_review_result: not_run
 final_review_evidence: ""
 updated_at: "YYYY-MM-DDThh:mm:ss+08:00"

@@ -1,0 +1,12 @@
+{
+  "name": "aiflow-browser-tests",
+  "private": true,
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "element-plus": "2.14.7",
+    "vue": "3.5.44"
+  }
+}

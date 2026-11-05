@@ -11,12 +11,12 @@
 阶段 2 有两个确认点，顺序固定：
 
 ```
-PRD 初稿 → 用户评审 → 改 → … → 用户确认 PRD
+决策树澄清 → 共识确认 → PRD 初稿 → 用户评审 → 改 → … → 用户确认 PRD
     → 需要原型？ 否 → signoffs.prototype = skipped，阶段 2 完成
                  是 → 原型初稿 → 用户评审 → 改 → … → 用户确认原型 → 阶段 2 完成
 ```
 
-评审按 `references/review.md` 走，不清楚的地方按 `references/grilling.md` 追问。用户确认之前，不往下流转。
+写 PRD 或原型之前，先按 `references/clarification.md` 检查本轮决策：状态语义、异常、验收口径、交付形态及规范冲突。需要澄清就逐轮问到共识确认，再生成产物；输入已明确则记依据，不硬问。原型中发现新分叉时重新开启澄清，已确认 PRD 保留。产物随后按 `references/review.md` 评审。
 
 ## 输入
 
@@ -31,7 +31,7 @@ PRD 初稿 → 用户评审 → 改 → … → 用户确认 PRD
 3. **翻译的唯一方法**：能不能写出一个让这条标准失败的用例？写不出来就是还模糊。
 4. **非功能要求写数字**，不写"高性能""友好"。
 5. **写清不做什么**。
-6. **判断交付形态**：要不要产品原型、要不要设计稿，各写一句理由。用户在 PRD 评审时一起确认，确认后同步 `state.yaml` 的 `prototype_required`、`design_required`。需要其中任何一个时，再按 `references/design-system.md` 确定设计规范，记进 `.aiflow/design-system.md`，并在交付形态判断里写一行「设计规范」，随 PRD 一起确认。
+6. **判断交付形态**：要不要产品原型、要不要设计稿，各写一句理由。用户确认后由主会话同步 `prototype_required`、`design_required`；不需要设计时将 `design_image_status` 设为 `skipped`，需要时保留 `pending` 等待阶段 3 图片评审。需要其中任何一个时，再按 `references/design-system.md` 确定设计规范，随 PRD 一起确认。
 
    | 需要原型 | 不需要原型 |
    |---|---|

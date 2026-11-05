@@ -1,7 +1,7 @@
 /* aiflow 规范检查：在浏览器里量界面实际用到的颜色、字号、圆角、控件高度、字体，列出设计规范里没有的取值。
    用法：用浏览器自动化工具（Playwright 等）把本文件注入页面，再执行 aiflowSpecCheck()，返回问题列表；空列表表示没查出问题。
    取值范围从页面 :root 读：颜色是 :root 里的全部颜色变量（样式包、样式预设、design-system.md 令牌表、theme.css 合起来），
-   字号、圆角、控件高度是 --check-* 变量，字体是 --font。只查界面层：.dframe、.canvas、.state > .mini 和 [data-check] 里面的元素；
+   字号、圆角、控件高度是 --check-* 变量，字体是 --font。只查界面层：.dframe、.canvas、.state > .mini 和 [data-check] 这些根节点及后代；
    标注层（.mk、.dim）、色块（.sw）和 [data-nocheck] 不查。阴影、间距不查，靠走查点和评审。
    查得出「用了规范外的取值」，查不出「该用 A 却用了 B」（比如该用警告色却用了错误色），后者靠走查点和独立评审。
    阶段 7 查实现页面：先在设计稿页面执行 JSON.stringify(aiflowSpecConfig()) 取出取值范围，
@@ -163,7 +163,7 @@
       groups[id].count++;
     }
     roots.forEach(function (root) {
-      root.querySelectorAll('*').forEach(function (el) {
+      [root].concat([].slice.call(root.querySelectorAll('*'))).forEach(function (el) {
         if (seen.has(el)) return;
         seen.add(el);
         if (el.closest(SKIP) || !visible(el)) return;
