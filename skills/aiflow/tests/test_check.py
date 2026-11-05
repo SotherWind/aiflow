@@ -316,7 +316,7 @@ class CheckTests(unittest.TestCase):
         self.state["design_image_status"] = "confirmed"
         self.state["design_image_fingerprint"] = result.stdout.strip()
 
-    def write_bug(self, records=(), task="T1", owner="BE", standard="A1", status="已关闭"):
+    def write_bug(self, records=(), task="T1", owner="BE", standard="A1", status="已关闭", extra=""):
         rows = "".join("| %d | %s | %s | %s | %s |\n" % row for row in records)
         self.write_art("09-bugs.md", """> 依据 facts v1 生成
 ## 汇总
@@ -327,14 +327,14 @@ class CheckTests(unittest.TestCase):
 ### BUG-1 · 示例
 - 关联验收：%s
 - 现象：失败
-
+%s
 #### 复测记录
 | 轮次 | 用例 | 验收标准 | 结果 | 证据 |
 |---|---|---|---|---|
 %s
 #### 复测结论
 - 结论：通过 → 已关闭
-""" % (task, owner, status, standard, rows))
+""" % (task, owner, status, standard, extra, rows))
 
     def fail_initial_test(self):
         self.replace_art("08-test-report.md", "| T1 | BE | 1 | 1 | 0 | 通过 | — |",
@@ -1881,6 +1881,63 @@ class CheckTests(unittest.TestCase):
                 self.assert_blocked(self.run_check(), "本阶段的 %s 不能沿用旧 developer 会话" % role)
                 self.state["agent_sessions"][role] = "agent:%s-stage9" % role
                 self.assert_pass(self.run_check())
+
+    def test_walkthrough_requires_fe_only_when_a_ux_issue_was_closed(self):
+        results = [(1, "W%d" % n, "不通过" if n == 3 else "通过") for n in range(1, 11)]
+        for status, rows, score in (("遗留", results, "9/10"), ("已关闭", results + [(2, "W3", "通过")], "10/10")):
+            with self.subTest(status=status):
+                self.make_full()
+                self.truncate(7)
+                self.replace_art("04-mapping.md", "| E1 |", "| — |")
+                self.replace_art("04-mapping.md", "| E2 |", "| — |")
+                self.write_walkthrough(rows, score, "通过", [ux_issue("UX-1", "W3", status, closed=status == "已关闭")])
+                self.state["mode"] = 2
+                self.state["agent_sessions"] = {"designer": "agent:ux-stage7", "fe": "agent:fe-stage7", "be": "agent:be"}
+                self.record_dispatch("designer")
+                if status == "已关闭":
+                    self.assert_blocked(self.run_check(), "stage_dispatch.fe 缺少本阶段实际派发与完成回报证据")
+                    self.record_dispatch("designer", "fe")
+                self.assert_pass(self.run_check())
+        self.record_execution()
+        self.state["agent_sessions"]["fe"] = "agent:fe-stage6"
+        self.state["session_log"] = ["7 6 fe agent:fe-stage6"]
+        self.log_sessions(8, "designer", "fe")
+        self.assert_blocked(self.run_check(), "会话 agent:fe-stage6 在 session_log 中出现在多次执行")
+        self.state["agent_sessions"]["fe"] = "agent:fe-stage7"
+        self.state["session_log"] = ["7 6 fe agent:fe-stage6"]
+        self.log_sessions(8, "designer", "fe")
+        self.assert_pass(self.run_check())
+
+    def test_fe_bug_listing_walkthrough_points_requires_designer_recheck(self):
+        records = [(1, "E2", "A2", "通过", "test-only-retest-log")]
+        for label, extra, designer_needed in (
+                ("无走查点", "\n**待验点** *（开发填写）*\n\n1. 校验逻辑\n", False),
+                ("加粗小节", "\n**待验点** *（开发填写）*\n\n1. 受影响的走查点：W3\n", True),
+                ("单行字段", "- 待验点：W3\n", True)):
+            with self.subTest(label=label):
+                self.make_full()
+                self.truncate(9)
+                self.write_bug(records, task="T2", owner="FE", standard="A2", extra=extra)
+                self.state["mode"] = 2
+                self.state["agent_sessions"] = {"designer": "agent:ux-stage9", "fe": "agent:fe-stage9",
+                                                "be": "agent:be-stage6", "tester": "agent:test-stage9"}
+                self.record_dispatch("tester", "fe")
+                if designer_needed:
+                    self.assert_blocked(self.run_check(), "stage_dispatch.designer 缺少本阶段实际派发与完成回报证据")
+                    self.record_dispatch("tester", "fe", "designer")
+                self.assert_pass(self.run_check())
+        self.write_bug(records, task="T2", owner="FE", standard="A2", extra="- 待验点：W99\n")
+        self.assert_blocked(self.run_check(), "缺陷单待验点引用了未定义的走查点：BUG-1 → W99")
+        self.write_bug(records, task="T2", owner="FE", standard="A2", extra="- 待验点：W3\n")
+        self.record_execution()
+        self.state["agent_sessions"]["designer"] = "agent:ux-stage7"
+        self.state["session_log"] = ["7 7 designer agent:ux-stage7"]
+        self.log_sessions(9, "tester", "fe", "designer")
+        self.assert_blocked(self.run_check(), "会话 agent:ux-stage7 在 session_log 中出现在多次执行")
+        self.state["agent_sessions"]["designer"] = "agent:ux-stage9"
+        self.state["session_log"] = ["7 7 designer agent:ux-stage7"]
+        self.log_sessions(9, "tester", "fe", "designer")
+        self.assert_pass(self.run_check())
 
     def test_delegated_design_requires_separate_author_and_reviewer(self):
         self.make_full()

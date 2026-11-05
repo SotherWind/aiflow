@@ -469,6 +469,12 @@ def release_field(text, name):
     return values[0] if values else ""
 
 
+def field_block(text, name):
+    """取「**名称**」加粗标题下到下一个加粗标题或小节标题之间的内容，如缺陷单的「待验点」。"""
+    match = re.search(r"^\*\*%s\*\*[^\n]*\n?(.*?)(?=^\*\*|^#{1,4}\s|\Z)" % re.escape(name), text, re.M | re.S)
+    return match.group(1) if match else ""
+
+
 def missing_value(value):
     return not value or value in ("……", "...", "—") or (value.startswith("<") and value.endswith(">"))
 
@@ -640,7 +646,7 @@ def check_clarification(state, stage, questions):
     return valid
 
 
-def check_agent_sessions(state, stage, task_types, repair_types=()):
+def check_agent_sessions(state, stage, task_types, repair_types=(), conditional_roles=()):
     """核对角色交接与身份隔离；会话 ID 本身不能证明子代理实际执行过。"""
     mode = state.get("mode")
     if mode not in (2, 3):
@@ -668,6 +674,7 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
         current_roles.add("tester")
     if stage == 7 and state.get("design_required") is True:
         current_roles.add("designer")
+    current_roles |= set(conditional_roles)
     work_types = set(task_types.values()) if stage == 6 else set(repair_types) if stage == 9 else set()
     if "FE" in work_types:
         current_roles.add("fe")
@@ -1204,9 +1211,9 @@ def check_walkthrough(text, checkpoints, state):
 
 
 def check_ux_issues(text, checkpoints, final, walkthrough_passed, open_ux_issues):
-    """走查问题单：前端改完由体验设计师复查关单；遗留只允许非关键项且还原度已通过。"""
+    """走查问题单：前端改完由体验设计师复查关单；遗留只允许非关键项且还原度已通过。返回已关闭的问题单编号。"""
     header, rows = first_table(section(text, "走查问题单"))
-    issues, open_ids, ticketed = {}, set(), set()
+    issues, open_ids, ticketed, closed_ids = {}, set(), set(), set()
     for row in rows:
         data = row_dict(header, row)
         identifier = data.get("编号", row[0] if row else "")
@@ -1229,6 +1236,7 @@ def check_ux_issues(text, checkpoints, final, walkthrough_passed, open_ux_issues
         if status in UX_OPEN_STATUSES:
             open_ids.add(identifier)
         elif status == "已关闭":
+            closed_ids.add(identifier)
             if not re.search(r"结论\s*[:：]\s*通过(?:\s*→\s*已关闭)?\s*$", clean_md(details), re.M):
                 block("走查问题单已关闭但没有复查通过结论：%s" % identifier)
             if point in checkpoints and final.get(point) != "通过":
@@ -1246,6 +1254,7 @@ def check_ux_issues(text, checkpoints, final, walkthrough_passed, open_ux_issues
     for identifier in sort_ids(i for i, result in final.items() if result == "不通过"):
         if identifier not in ticketed:
             block("未通过的走查点没有走查问题单：%s" % identifier)
+    return closed_ids
 
 
 def check_design_system(af):
@@ -1609,7 +1618,7 @@ def main():
     check_signoff(signoffs, "scope", texts, INTAKE, "范围")
     if stage >= 1:
         check_signoff(signoffs, "requirement", texts, RESEARCH, "需求")
-    prototype_pages, design_pages, checkpoints = set(), set(), {}
+    prototype_pages, design_pages, checkpoints, closed_ux_issues = set(), set(), {}, set()
     if stage >= 2:
         for flag in ("prototype_required", "design_required"):
             if not isinstance(state.get(flag), bool):
@@ -1637,8 +1646,8 @@ def main():
             block("不需要设计稿时 state.walkthrough_result 必须为 skipped")
         elif state.get("design_required") is True and WALKTHROUGH in texts and checkpoints:
             final, walkthrough_passed = check_walkthrough(texts[WALKTHROUGH], checkpoints, state)
-            check_ux_issues(texts[WALKTHROUGH], checkpoints, final, walkthrough_passed,
-                            required_list(state, "open_ux_issues"))
+            closed_ux_issues = check_ux_issues(texts[WALKTHROUGH], checkpoints, final, walkthrough_passed,
+                                               required_list(state, "open_ux_issues"))
 
     for name in required:
         if name < "02-prd.md" or name in (DESIGN, WALKTHROUGH):
@@ -1915,6 +1924,7 @@ def main():
     bug_acceptance = {}
     bug_owner = {}
     bug_retest_passes = {}
+    bug_points = {}
     if bugs_text:
         header, rows = first_table(section(bugs_text, "汇总"))
         for row in rows:
@@ -1939,6 +1949,10 @@ def main():
                 elif bug_owner[identifier] != ("FE" if task_types.get(task_id) == "FE" else "BE"):
                     block("缺陷归属与任务类型不一致：%s → %s" % (identifier, task_id))
             details = detail_section(bugs_text, identifier)
+            bug_points[identifier] = ids_in(field_block(details, "待验点") + "\n" + release_field(details, "待验点"), "W")
+            if state.get("design_required") is True and checkpoints:
+                for point in sort_ids(bug_points[identifier] - set(checkpoints)):
+                    block("缺陷单待验点引用了未定义的走查点：%s → %s" % (identifier, point))
             bug_acceptance[identifier] = ids_in(release_field(details, "关联验收"), "A")
             if not bug_acceptance[identifier] or not bug_acceptance[identifier] <= ids_a:
                 block("缺陷的关联验收缺失或无效：%s" % identifier)
@@ -1951,7 +1965,14 @@ def main():
                 block("已关闭缺陷缺少通过复测结论：%s" % identifier)
             bug_retest_passes[identifier] = check_bug_retests(
                 details, identifier, bug_acceptance[identifier], test_case_acceptance, status == "已关闭")
-    check_agent_sessions(state, stage, task_types, bug_owner.values())
+    # 阶段 7 有已关闭的走查问题单说明前端改过；阶段 9 FE 缺陷的待验点列了走查点时由设计师复查。
+    conditional_roles = set()
+    if stage == 7 and state.get("design_required") is True and closed_ux_issues:
+        conditional_roles.add("fe")
+    if stage == 9 and state.get("design_required") is True and any(
+            bug_points.get(identifier) for identifier, owner in bug_owner.items() if owner == "FE"):
+        conditional_roles.add("designer")
+    check_agent_sessions(state, stage, task_types, bug_owner.values(), conditional_roles)
 
     summary_open = {identifier for identifier, status in bug_summary.items() if status in OPEN_BUG_STATUSES}
     if BUGS not in invalidated and open_bugs != summary_open:
