@@ -2079,9 +2079,13 @@ def main():
         for case_id in sort_ids(current_cases - regression_cases):
             block("全量回归未执行当前验收用例：%s" % case_id)
         fe_closed = sorted(b for b, s in bug_summary.items() if s == "已关闭" and bug_owner.get(b) == "FE")
-        if state.get("design_required") is True and fe_closed:
-            if release_field(section(regression_text, "设计还原复核"), "复核结论") != "通过":
-                block("关闭过 FE 缺陷（%s），回归缺少通过的「设计还原复核」" % ", ".join(fe_closed))
+        design_recheck = [b for b in fe_closed if bug_points.get(b)]
+        conclusion = release_field(section(regression_text, "设计还原复核"), "复核结论")
+        if state.get("design_required") is True and design_recheck:
+            if conclusion != "通过":
+                block("FE 缺陷（%s）的待验点列了走查点，回归缺少通过的「设计还原复核」" % ", ".join(design_recheck))
+        elif conclusion == "不通过":
+            block("回归的「设计还原复核」结论为不通过")
 
     if stage >= 11 and RELEASE in actual:
         release_status = state.get("release_status")

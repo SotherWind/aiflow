@@ -2796,10 +2796,24 @@ class CheckTests(unittest.TestCase):
 
     def test_closed_fe_bug_requires_design_recheck(self):
         self.make_full()
-        self.write_bug([(1, "E2", "A2", "通过", "retest-log-1")], task="T2", owner="FE", standard="A2")
+        self.write_bug([(1, "E2", "A2", "通过", "retest-log-1")], task="T2", owner="FE", standard="A2",
+                       extra="- 待验点：W3\n")
         self.assert_blocked(self.run_check(), "回归缺少通过的「设计还原复核」")
         self.replace_art("10-regression.md", "## 四、结论\n", "## 四、设计还原复核\n- 复核结论：通过\n\n## 五、结论\n")
         self.assert_pass(self.run_check())
+
+    def test_fe_bug_without_walkthrough_points_does_not_require_design_recheck(self):
+        for conclusion in ("", "不适用", "通过"):
+            with self.subTest(conclusion=conclusion):
+                self.make_full()
+                self.write_bug([(1, "E2", "A2", "通过", "retest-log-1")], task="T2", owner="FE", standard="A2",
+                               extra="- 待验点：校验逻辑\n")
+                if conclusion:
+                    self.replace_art("10-regression.md", "## 四、结论\n",
+                                     "## 四、设计还原复核\n- 复核结论：%s\n\n## 五、结论\n" % conclusion)
+                self.assert_pass(self.run_check())
+        self.replace_art("10-regression.md", "- 复核结论：通过\n", "- 复核结论：不通过\n")
+        self.assert_blocked(self.run_check(), "回归的「设计还原复核」结论为不通过")
 
     def test_design_artifact_without_design_required_is_blocked(self):
         self.make_full(design=False)
