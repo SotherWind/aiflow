@@ -64,7 +64,7 @@ invalidated_artifacts:
 | `08-test-report.md` 或 `10-regression.md` | `final_review_result: not_run`、`final_review_evidence: ""` |
 | `11-release.md` | 新一轮 `release_status: planned`；这不代表撤销了实际部署，也不授权执行生产回滚 |
 
-未受影响的技术栈锁定、开发规范和角色会话不因回退自动清空。重新进入的阶段按 `references/orchestration.md` 新建协调器和角色，在 `session_log` 用新的执行序号记录，不沿用回退前的会话。回退到阶段 5 前，撤下当前映射中的旧 T/E 回填；阶段 8 前撤下旧 E 回填，分别等任务定义和测试执行后再登记，历史映射保持原样。
+未受影响的技术栈锁定、开发规范和角色会话不因回退自动清空。重新进入的阶段按 `references/orchestration.md` 新建所需角色，协调器阶段同时新建协调器，在 `session_log` 用新的执行序号记录，不沿用回退前的会话。回退到阶段 5 前，撤下当前映射中的旧 T/E 回填；阶段 8 前撤下旧 E 回填，分别等任务定义和测试执行后再登记，历史映射保持原样。
 
 仅修正 HTML 对确认图片的还原偏差时，保留图片确认与指纹，更新 HTML 核对证据和受影响的最终确认。替换基准图片时不能只重算指纹沿用旧同意。没有先行生图记录的旧项目保留真实 HTML 历史，再进入阶段 3 做新设计时才启用图片评审。
 

@@ -283,7 +283,7 @@ class CheckTests(unittest.TestCase):
         else:
             self.state["stage_execution"] = {
                 "stage": stage, "strategy": "direct",
-                "fallback_reason": "test-limit:native-nesting-unavailable-stage%d" % stage}
+                "fallback_reason": "单角色阶段"}
 
     def log_sessions(self, execution, *roles):
         """按实际派工追加会话台账：本阶段协调器和各角色各记一条。"""
@@ -2018,13 +2018,13 @@ class CheckTests(unittest.TestCase):
         self.record_execution()
         self.assert_pass(self.run_check())
 
-    def test_direct_fallback_requires_reason_and_cannot_claim_coordinator(self):
+    def test_direct_dispatch_requires_reason_and_cannot_claim_coordinator(self):
         self.make_full(design=False)
         self.truncate(2)
         self.state["mode"] = 2
         self.state["agent_sessions"] = {"pm": "agent:p"}
         self.record_dispatch("pm")
-        for reason in (None, "", "<实际原生嵌套限制与证据>", 0):
+        for reason in (None, "", "<直接派工的原因>", 0):
             with self.subTest(reason=reason):
                 self.record_execution("direct")
                 self.state["stage_execution"]["fallback_reason"] = reason

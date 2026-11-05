@@ -781,7 +781,7 @@ def check_stage_execution(state, stage, mode, identities, required):
         return coordinator
     elif strategy == "direct":
         if not filled("fallback_reason"):
-            block("stage_execution.fallback_reason 缺少原生嵌套不可用的实际限制与依据")
+            block("stage_execution.fallback_reason 缺少直接派工的原因：单角色阶段写「单角色阶段」，协调器阶段写实际的嵌套限制")
         for key in ("coordinator", "handoff"):
             if record.get(key) not in (None, ""):
                 block("stage_execution.strategy 为 direct 时不能记录 %s；直接派工不存在协调器" % key)

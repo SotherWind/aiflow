@@ -36,7 +36,7 @@ npx skills add SotherWind/aiflow
 - 网络：`scripts/parity/` 和真实组件库对照时从 unpkg 加载 Element Plus
 - 联网检索 / 网页读取工具：用于按需调研公开案例与方案；不可用或用户禁止联网时明确限制，不编造调研结论
 - 图像生成与编辑能力：阶段 3 先出设计图、根据用户反馈改图；实际工具以运行环境为准，不用 HTML 截图替代
-- 子智能体嵌套：默认流程是主智能体 → 阶段执行协调器 → 专业角色，要用到两层子智能体。Claude Code 从 2.1.219 起默认支持；Codex 按文档 `agents.max_depth` 默认为 1，协调器不能再派角色，需在 `~/.codex/config.toml` 的 `[agents]` 下设 `max_depth = 2`。不支持嵌套时由主智能体直接派角色，并在 `state.yaml` 记录原因
+- 子智能体嵌套：单角色阶段由主智能体直接派角色，只用一层子智能体；多角色往返的阶段（3、4、6、7、9）走主智能体 → 阶段执行协调器 → 专业角色，要用两层。Claude Code 从 2.1.219 起默认支持两层；Codex 按文档 `agents.max_depth` 默认为 1，协调器不能再派角色，这些阶段需在 `~/.codex/config.toml` 的 `[agents]` 下设 `max_depth = 2`。不支持嵌套时由主智能体直接派角色，并在 `state.yaml` 记录原因
 
 ## 怎么用
 

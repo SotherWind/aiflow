@@ -86,7 +86,7 @@ agent_sessions: {}
 # 例如 analyst: "本阶段派工调用 …；完成返回 …；产出 …"；不能只填旧会话 ID。
 stage_dispatch:
   stage: 0
-# 当前阶段执行方式：模式 2/3 的 coordinated 记协调器实际 ID 与交接依据；原生嵌套不可用时 direct 记具体限制。
+# 当前阶段执行方式：模式 2/3 的 coordinated 记协调器实际 ID 与交接依据；direct 在 fallback_reason 写直接派工的原因：单角色阶段，或协调器阶段的嵌套限制。
 # 与 stage_dispatch 同时重置；空值只表示尚未记录，模式 1 保持为空。规则见 references/orchestration.md。
 stage_execution:
   stage: 0
