@@ -33,6 +33,8 @@ REVIEW_DONE = {"已处理", "不改"}
 UX_OPEN_STATUSES = {"待修复", "待复查", "打回"}
 WALKTHROUGH_PASS_PERCENT = 90
 OPEN_BUG_STATUSES = {"待修复", "待复测", "打回"}
+AGENT_ROLES = ("analyst", "pm", "designer", "architect", "fe", "be", "tester", "operator", "design_reviewer")
+SESSION_LOG_ROLES = AGENT_ROLES + ("coordinator",)
 REGRESSION_MAP = {"通过": "pass", "有条件通过": "conditional", "不通过": "fail"}
 RELEASE_MAP = {"计划中": "planned", "已发布待观察": "deployed", "观察完成": "verified", "已回滚": "rolled_back"}
 
@@ -646,7 +648,7 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
             check_stage_execution(state, stage, mode, {}, False)
         return
     sessions = required_dict(state, "agent_sessions")
-    roles = ("analyst", "pm", "designer", "architect", "fe", "be", "tester", "operator", "design_reviewer")
+    roles = AGENT_ROLES
     identities = {}
     for role in roles + ("developer", "final_reviewer"):
         value = sessions.get(role)
@@ -722,11 +724,16 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
         if missing_value(str(state.get("final_review_evidence") or "")):
             block("模式 3 缺少 final_review_evidence")
 
-    check_stage_execution(state, stage, mode, identities, bool(current_roles))
+    coordinator = check_stage_execution(state, stage, mode, identities, bool(current_roles))
+    dispatch = state.get("stage_dispatch")
+    dispatched = set()
+    if isinstance(dispatch, dict) and dispatch.get("stage") == stage and not isinstance(dispatch.get("stage"), bool):
+        dispatched = {role for role in roles if dispatch.get(role) not in (None, "")}
+    check_session_log(state, stage, identities, current_roles | dispatched, coordinator)
 
 
 def check_stage_execution(state, stage, mode, identities, required):
-    """核对本阶段执行方式的记录形状与身份；字段本身不能证明协调器或子智能体实际执行过。"""
+    """核对本阶段执行方式的记录形状与身份，记录了协调器时返回其 ID；字段本身不能证明协调器或子智能体实际执行过。"""
     # 旧项目没有这条记录时按旧直接派工兼容。
     if "stage_execution" not in state:
         return
@@ -764,6 +771,7 @@ def check_stage_execution(state, stage, mode, identities, required):
             block("stage_execution.handoff 缺少主控派工与协调器返回的实际依据")
         elif record["handoff"].strip() in set(identities.values()) | {coordinator}:
             block("stage_execution.handoff 不能只填会话 ID；须记录本阶段派工调用与协调器返回依据")
+        return coordinator
     elif strategy == "direct":
         if not filled("fallback_reason"):
             block("stage_execution.fallback_reason 缺少原生嵌套不可用的实际限制与依据")
@@ -772,6 +780,49 @@ def check_stage_execution(state, stage, mode, identities, required):
                 block("stage_execution.strategy 为 direct 时不能记录 %s；直接派工不存在协调器" % key)
     else:
         block("stage_execution.strategy 必须为 coordinated 或 direct")
+
+
+def check_session_log(state, stage, identities, expected_roles, coordinator):
+    """核对只追加的派工会话台账：本阶段派出的会话都已记录，且没有在别的执行或角色中出现过；台账本身不能证明会话真实。"""
+    # 旧项目没有这份台账时，无法核对跨阶段复用，按兼容放行。
+    if "session_log" not in state:
+        return
+    entries = state["session_log"] or []
+    if not isinstance(entries, list):
+        block("state.yaml.session_log 必须是列表")
+        return
+    exec_stages, places, logged = {}, {}, {}
+    for number, entry in enumerate(entries, 1):
+        match = re.fullmatch(r"([0-9]+)\s+([0-9]+)\s+(\S+)\s+(\S.*)", entry.strip()) if isinstance(entry, str) else None
+        if (not match or int(match.group(1)) < 1 or int(match.group(2)) > LAST_STAGE
+                or match.group(3) not in SESSION_LOG_ROLES or missing_value(match.group(4).strip())):
+            block("session_log 第 %d 条应写成「执行序号 阶段 角色 会话ID」：%s" % (number, entry))
+            continue
+        execution, entry_stage, role = int(match.group(1)), int(match.group(2)), match.group(3)
+        session = match.group(4).strip()
+        exec_stages.setdefault(execution, set()).add(entry_stage)
+        places.setdefault(session, set()).add((execution, entry_stage, role))
+        logged.setdefault((execution, role), set()).add(session)
+    for execution, stages in sorted(exec_stages.items()):
+        if len(stages) > 1:
+            block("session_log 第 %d 次执行混用了阶段 %s；每次进入、回退或重做阶段都用新的执行序号"
+                  % (execution, "、".join(str(item) for item in sorted(stages))))
+    for session, found in sorted(places.items()):
+        if len({(execution, role) for execution, _, role in found}) > 1:
+            block("会话 %s 在 session_log 中出现在多次执行或多个角色（%s）；换阶段、回退或重做都要新建会话，不同角色也不能共用"
+                  % (session, "；".join("第 %d 次执行 阶段 %d %s" % place for place in sorted(found))))
+    if not expected_roles and not coordinator:
+        return
+    latest = max(exec_stages) if exec_stages else None
+    if latest is None or exec_stages[latest] != {stage}:
+        block("session_log 最新一次执行不是当前阶段 %d；进入、回退或重做阶段时用新的执行序号追加本次派出的会话" % stage)
+        return
+    expected = [("agent_sessions." + role, role, identities[role]) for role in sorted(expected_roles) if role in identities]
+    if coordinator:
+        expected.append(("stage_execution.coordinator", "coordinator", coordinator))
+    for label, role, session in expected:
+        if session not in logged.get((latest, role), set()):
+            block("%s 的会话 %s 没有记进 session_log 第 %d 次执行；本阶段派出的会话都要按实际追加" % (label, session, latest))
 
 
 def check_delivery_form(prd_text, state):

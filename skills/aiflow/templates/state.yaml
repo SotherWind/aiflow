@@ -94,6 +94,9 @@ stage_execution:
   coordinator: ""
   handoff: ""
   fallback_reason: ""
+# 只追加的派工会话台账，用来查出换阶段沿用旧会话。每条写成 "执行序号 阶段 角色 会话ID"，角色为 coordinator 或上面的角色键。
+# 每次进入、回退或重做阶段取已有最大序号 + 1，本阶段派出的协调器和角色拿到 ID 后各记一条；旧条目不删不改，模式 1 保持为空。
+session_log: []
 final_review_result: not_run
 final_review_evidence: ""
 updated_at: "YYYY-MM-DDThh:mm:ss+08:00"

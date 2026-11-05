@@ -285,6 +285,15 @@ class CheckTests(unittest.TestCase):
                 "stage": stage, "strategy": "direct",
                 "fallback_reason": "test-limit:native-nesting-unavailable-stage%d" % stage}
 
+    def log_sessions(self, execution, *roles):
+        """按实际派工追加会话台账：本阶段协调器和各角色各记一条。"""
+        stage = self.state["stage"]
+        record = self.state.get("stage_execution")
+        entries = self.state.setdefault("session_log", [])
+        if isinstance(record, dict) and record.get("coordinator"):
+            entries.append("%d %d coordinator %s" % (execution, stage, record["coordinator"]))
+        entries.extend("%d %d %s %s" % (execution, stage, role, self.state["agent_sessions"][role]) for role in roles)
+
     def image_fingerprint_command(self):
         return subprocess.run([sys.executable, str(CHECK), str(self.root), "--design-image-fingerprint"],
                               capture_output=True, text=True, encoding="utf-8")
@@ -595,6 +604,9 @@ class CheckTests(unittest.TestCase):
         text = text.replace('  strategy: ""', "  strategy: coordinated")
         text = text.replace('  coordinator: ""', '  coordinator: "agent:coordinator-stage0"')
         text = text.replace('  handoff: ""', '  handoff: "test-call:stage0-coordinator; returned:test-handoff-stage0"')
+        path.write_text(text, encoding="utf-8")
+        self.assert_blocked(self.run_check(), "session_log 最新一次执行不是当前阶段 0")
+        text = text.replace("session_log: []", 'session_log:\n  - "1 0 coordinator agent:coordinator-stage0"\n  - "1 0 analyst agent:analyst"')
         path.write_text(text, encoding="utf-8")
         self.assert_pass(self.run_check())
 
@@ -1986,6 +1998,118 @@ class CheckTests(unittest.TestCase):
                 self.record_execution(strategy)
                 self.assert_blocked(self.run_check(), "stage_execution.strategy 必须留空")
         self.state["stage_execution"] = {"stage": 11, "strategy": ""}
+        self.assert_pass(self.run_check())
+
+    def test_session_log_absent_stays_legacy_compatible_but_present_must_record_current_sessions(self):
+        self.make_full(design=False)
+        self.truncate(1)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:analyst-stage1"}
+        self.record_dispatch("analyst")
+        self.record_execution()
+        self.assert_pass(self.run_check())
+        earlier = ["1 0 coordinator agent:coordinator-stage0", "1 0 analyst agent:analyst-stage0"]
+        for log in ([], earlier):
+            with self.subTest(log=log):
+                self.state["session_log"] = list(log)
+                self.assert_blocked(self.run_check(), "session_log 最新一次执行不是当前阶段 1")
+        self.state["session_log"] = list(earlier)
+        self.log_sessions(2)
+        self.assert_blocked(self.run_check(), "agent_sessions.analyst 的会话 agent:analyst-stage1 没有记进 session_log 第 2 次执行")
+        self.state["session_log"] = earlier + ["2 1 analyst agent:analyst-stage1"]
+        self.assert_blocked(self.run_check(), "stage_execution.coordinator 的会话 agent:coordinator-stage1 没有记进")
+        self.log_sessions(2)
+        self.assert_pass(self.run_check())
+
+    def test_session_log_each_stage_entry_uses_a_new_execution_number(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:pm-stage2"}
+        self.record_dispatch("pm")
+        self.record_execution()
+        earlier = ["1 0 analyst agent:analyst-stage0", "2 1 analyst agent:analyst-stage1"]
+        self.state["session_log"] = list(earlier)
+        self.log_sessions(2, "pm")
+        self.assert_blocked(self.run_check(), "session_log 第 2 次执行混用了阶段 1、2")
+        self.state["session_log"] = list(earlier)
+        self.log_sessions(3, "pm")
+        self.assert_pass(self.run_check())
+
+    def test_session_log_blocks_carrying_previous_stage_session_into_new_stage(self):
+        self.make_full(design=False)
+        self.truncate(1)
+        self.state["mode"] = 2
+        self.record_dispatch("analyst")
+        earlier = ["1 0 coordinator agent:coordinator-stage0", "1 0 analyst agent:analyst-stage0"]
+        for analyst, coordinator in (("agent:analyst-stage0", "agent:coordinator-stage1"),
+                                     ("agent:analyst-stage1", "agent:coordinator-stage0")):
+            with self.subTest(analyst=analyst, coordinator=coordinator):
+                self.state["agent_sessions"] = {"analyst": analyst}
+                self.record_execution()
+                self.state["stage_execution"]["coordinator"] = coordinator
+                self.state["session_log"] = list(earlier)
+                self.log_sessions(2, "analyst")
+                self.assert_blocked(self.run_check(), "在 session_log 中出现在多次执行")
+        self.state["agent_sessions"] = {"analyst": "agent:analyst-stage1"}
+        self.record_execution()
+        self.state["session_log"] = list(earlier)
+        self.log_sessions(2, "analyst")
+        self.assert_pass(self.run_check())
+
+    def test_session_log_rollback_needs_new_execution_and_new_sessions(self):
+        self.make_full(design=False)
+        self.truncate(4)
+        self.replace_art("04-mapping.md", "| T1 | E1 |", "| — | — |")
+        self.replace_art("04-mapping.md", "| T2 | E2 |", "| — | — |")
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"architect": "agent:arch-stage4", "tester": "agent:test-stage4"}
+        self.record_dispatch("architect", "tester")
+        self.record_execution()
+        first = ["5 4 coordinator agent:coordinator-stage4", "5 4 architect agent:arch-stage4",
+                 "5 4 tester agent:test-stage4", "6 5 architect agent:arch-stage5", "7 6 fe agent:fe-stage6"]
+        self.state["session_log"] = list(first)
+        self.assert_blocked(self.run_check(), "session_log 最新一次执行不是当前阶段 4")
+        self.state["stage_execution"]["coordinator"] = "agent:coordinator-redo4"
+        self.log_sessions(8, "architect", "tester")
+        self.assert_blocked(self.run_check(), "会话 agent:arch-stage4 在 session_log 中出现在多次执行")
+        self.state["agent_sessions"] = {"architect": "agent:arch-redo4", "tester": "agent:test-redo4"}
+        self.state["session_log"] = list(first)
+        self.log_sessions(8, "architect", "tester")
+        self.assert_pass(self.run_check())
+
+    def test_session_log_rejects_malformed_or_shared_entries(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:pm-stage2"}
+        self.record_dispatch("pm")
+        self.record_execution()
+        for entry in ("3 2 pm", "x 2 pm agent:x", "0 2 pm agent:x", "3 12 pm agent:x",
+                      "3 2 boss agent:x", "3 2 developer agent:x", "3 2 pm <会话 ID>", 7):
+            with self.subTest(entry=entry):
+                self.state["session_log"] = []
+                self.log_sessions(3, "pm")
+                self.state["session_log"].append(entry)
+                self.assert_blocked(self.run_check(), "应写成「执行序号 阶段 角色 会话ID」")
+        self.state["session_log"] = "3 2 pm agent:pm-stage2"
+        self.assert_blocked(self.run_check(), "session_log 必须是列表")
+        self.state["session_log"] = ["1 1 tester agent:pm-stage2"]
+        self.log_sessions(3, "pm")
+        self.assert_blocked(self.run_check(), "会话 agent:pm-stage2 在 session_log 中出现在多次执行或多个角色")
+
+    def test_session_log_covers_every_role_dispatched_this_stage(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:pm-stage2", "designer": "agent:ux-stage2"}
+        self.record_dispatch("pm", "designer")
+        self.record_execution()
+        self.state["session_log"] = []
+        self.log_sessions(3, "pm")
+        self.assert_blocked(self.run_check(), "agent_sessions.designer 的会话 agent:ux-stage2 没有记进 session_log 第 3 次执行")
+        self.state["session_log"] = []
+        self.log_sessions(3, "pm", "designer")
         self.assert_pass(self.run_check())
 
     def test_delegated_task_types_select_required_developers(self):
