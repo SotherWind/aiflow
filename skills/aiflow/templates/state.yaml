@@ -80,7 +80,7 @@ release_status: planned
 
 # 模式 2/3 按实际派工记录 analyst、pm、designer、architect、fe、be、tester、operator 的真实会话 ID。
 # 阶段 3 另需独立 design_reviewer；模式 3 另需 final_reviewer 及独立终验证据。
-# 同角色后续任务优先恢复原 ID；旧项目 developer 兼容保留，详见 references/orchestration.md。
+# 同阶段的后续任务可恢复本阶段原 ID；换阶段、回退或重做时新建。旧项目 developer 只作历史身份，不能充当本阶段 fe/be，详见 references/orchestration.md。
 agent_sessions: {}
 # 当前阶段派工完成依据；进新阶段/重做时重置，收到角色真实返回后再添加角色键。
 # 例如 analyst: "本阶段派工调用 …；完成返回 …；产出 …"；不能只填旧会话 ID。

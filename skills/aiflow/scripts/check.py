@@ -698,15 +698,18 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
             elif evidence.strip() in identities.values():
                 block("stage_dispatch.%s 不能只填会话 ID；须记录本阶段派发与完成回报证据" % role)
 
-    # developer 是旧项目的开发身份别名，可与 fe/be 对应，但不能成为验收角色。
+    # developer 是旧项目的开发身份别名，只作历史记录：不能成为验收角色，也不能充当本阶段派工的 fe/be。
     for index, role in enumerate(roles):
         if role not in identities:
             continue
         for other in roles[index + 1:]:
             if identities.get(other) == identities[role]:
                 block("模式 %d 的 %s 与 %s 必须是独立身份" % (mode, role, other))
-        if role not in ("fe", "be") and identities.get("developer") == identities[role]:
-            block("模式 %d 的 %s 与 developer 必须是独立身份" % (mode, role))
+        if identities.get("developer") == identities[role]:
+            if role not in ("fe", "be"):
+                block("模式 %d 的 %s 与 developer 必须是独立身份" % (mode, role))
+            elif role in current_roles:
+                block("本阶段的 %s 不能沿用旧 developer 会话；前后端分别新建独立上下文" % role)
 
     if mode == 3 and stage >= 10:
         reviewer = identities.get("final_reviewer", "")

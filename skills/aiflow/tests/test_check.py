@@ -1763,16 +1763,15 @@ class CheckTests(unittest.TestCase):
                     self.state["stage_dispatch"] = dispatch
                 self.assert_blocked(self.run_check(), "stage_dispatch")
 
-    def test_stage1_resumes_same_analyst_with_current_completion_evidence(self):
+    def test_stage1_new_analyst_needs_current_completion_evidence(self):
         self.make_full(design=False)
         self.truncate(1)
         self.state["mode"] = 2
-        self.state["agent_sessions"] = {"analyst": "agent:reusable-analyst"}
-        self.state["stage_dispatch"] = {"stage": 1, "analyst": "agent:reusable-analyst"}
+        self.state["agent_sessions"] = {"analyst": "agent:analyst-stage1"}
+        self.state["stage_dispatch"] = {"stage": 1, "analyst": "agent:analyst-stage1"}
         self.assert_blocked(self.run_check(), "不能只填会话 ID")
         self.record_dispatch("analyst")
         self.assert_pass(self.run_check())
-        self.assertEqual(self.state["agent_sessions"]["analyst"], "agent:reusable-analyst")
 
     def test_current_dispatch_requires_valid_stage_and_completed_role_record(self):
         self.make_full(design=False)
@@ -1831,9 +1830,11 @@ class CheckTests(unittest.TestCase):
         self.state["agent_sessions"].update(fe="agent:legacy-dev", be="agent:legacy-dev")
         self.assert_blocked(self.run_check(), "fe 与 be 必须是独立身份")
         self.state["agent_sessions"]["be"] = "agent:backend"
+        self.assert_blocked(self.run_check(), "本阶段的 fe 不能沿用旧 developer 会话")
+        self.state["agent_sessions"]["fe"] = "agent:frontend"
         self.assert_pass(self.run_check())
 
-    def test_current_fe_dispatch_requires_role_identity_even_with_legacy_developer(self):
+    def test_current_fe_dispatch_requires_new_identity_not_legacy_developer(self):
         self.make_full(design=False)
         self.truncate(6)
         self.replace_art("04-mapping.md", "| E1 |", "| — |")
@@ -1844,6 +1845,8 @@ class CheckTests(unittest.TestCase):
         self.record_dispatch("fe")
         self.assert_blocked(self.run_check(), "缺少 agent_sessions.fe")
         self.state["agent_sessions"]["fe"] = "agent:resumed"
+        self.assert_blocked(self.run_check(), "本阶段的 fe 不能沿用旧 developer 会话")
+        self.state["agent_sessions"]["fe"] = "agent:frontend"
         self.assert_pass(self.run_check())
 
     def test_bug_repair_requires_current_owner_dispatch_and_tester_return(self):
@@ -1863,6 +1866,8 @@ class CheckTests(unittest.TestCase):
                 self.record_dispatch(role, "tester")
                 self.assert_blocked(self.run_check(), "缺少 agent_sessions." + role)
                 self.state["agent_sessions"][role] = "agent:dev"
+                self.assert_blocked(self.run_check(), "本阶段的 %s 不能沿用旧 developer 会话" % role)
+                self.state["agent_sessions"][role] = "agent:%s-stage9" % role
                 self.assert_pass(self.run_check())
 
     def test_delegated_design_requires_separate_author_and_reviewer(self):
