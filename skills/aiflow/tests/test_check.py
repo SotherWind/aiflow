@@ -273,6 +273,18 @@ class CheckTests(unittest.TestCase):
         self.state["stage_dispatch"].update({role: "test-call:stage%d-%s; completed:test-result-stage%d-%s" %
                                              (stage, role, stage, role) for role in roles})
 
+    def record_execution(self, strategy="coordinated"):
+        """模拟主控按实际交接记录本阶段执行方式。"""
+        stage = self.state["stage"]
+        if strategy == "coordinated":
+            self.state["stage_execution"] = {
+                "stage": stage, "strategy": "coordinated", "coordinator": "agent:coordinator-stage%d" % stage,
+                "handoff": "test-call:stage%d-coordinator; returned:test-handoff-stage%d" % (stage, stage)}
+        else:
+            self.state["stage_execution"] = {
+                "stage": stage, "strategy": "direct",
+                "fallback_reason": "test-limit:native-nesting-unavailable-stage%d" % stage}
+
     def image_fingerprint_command(self):
         return subprocess.run([sys.executable, str(CHECK), str(self.root), "--design-image-fingerprint"],
                               capture_output=True, text=True, encoding="utf-8")
@@ -578,6 +590,11 @@ class CheckTests(unittest.TestCase):
         path = self.af / "state.yaml"
         text = path.read_text(encoding="utf-8").replace("agent_sessions: {}", 'agent_sessions:\n  analyst: "agent:analyst"')
         text = text.replace("stage_dispatch:\n  stage: 0", 'stage_dispatch:\n  stage: 0\n  analyst: "test-call:stage0-analyst; completed:test-result-stage0"')
+        path.write_text(text, encoding="utf-8")
+        self.assert_blocked(self.run_check(), "stage_execution.strategy 未记录")
+        text = text.replace('  strategy: ""', "  strategy: coordinated")
+        text = text.replace('  coordinator: ""', '  coordinator: "agent:coordinator-stage0"')
+        text = text.replace('  handoff: ""', '  handoff: "test-call:stage0-coordinator; returned:test-handoff-stage0"')
         path.write_text(text, encoding="utf-8")
         self.assert_pass(self.run_check())
 
@@ -1864,6 +1881,106 @@ class CheckTests(unittest.TestCase):
         self.make_full(design=False)
         self.truncate(3)
         self.state["mode"] = 2
+        self.assert_pass(self.run_check())
+
+    def test_stage_execution_absent_stays_legacy_compatible_but_present_must_be_recorded(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:p"}
+        self.record_dispatch("pm")
+        self.assert_pass(self.run_check())
+        for record in ({"stage": 2, "strategy": ""}, {}, ""):
+            with self.subTest(record=record):
+                self.state["stage_execution"] = record
+                self.assert_blocked(self.run_check(), "stage_execution.strategy 未记录")
+        self.state["stage_execution"] = ["coordinated"]
+        self.assert_blocked(self.run_check(), "stage_execution 必须是一层字典")
+        self.record_execution()
+        self.assert_pass(self.run_check())
+
+    def test_coordinated_execution_requires_current_stage_coordinator_and_handoff(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:p"}
+        self.record_dispatch("pm")
+        for stage in (0, 1, True, "2", None):
+            with self.subTest(stage=stage):
+                self.record_execution()
+                self.state["stage_execution"]["stage"] = stage
+                self.assert_blocked(self.run_check(), "stage_execution.stage")
+        for key, message in (("coordinator", "stage_execution.coordinator 必须是本阶段协调器的实际 ID"),
+                             ("handoff", "stage_execution.handoff 缺少")):
+            for value in ("", "   ", "<协调器 ID>", "……", 123, None):
+                with self.subTest(key=key, value=value):
+                    self.record_execution()
+                    self.state["stage_execution"][key] = value
+                    self.assert_blocked(self.run_check(), message)
+        for value in ("agent:p", "agent:coordinator-stage2"):
+            with self.subTest(handoff=value):
+                self.record_execution()
+                self.state["stage_execution"]["handoff"] = value
+                self.assert_blocked(self.run_check(), "stage_execution.handoff 不能只填会话 ID")
+        for strategy in ("parallel", "Coordinated", 1, True):
+            with self.subTest(strategy=strategy):
+                self.record_execution()
+                self.state["stage_execution"]["strategy"] = strategy
+                self.assert_blocked(self.run_check(), "必须为 coordinated 或 direct")
+        self.record_execution()
+        self.assert_pass(self.run_check())
+
+    def test_coordinator_must_differ_from_every_role_and_reviewer(self):
+        self.make_full()
+        self.truncate(3)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"analyst": "agent:a", "designer": "agent:ux", "design_reviewer": "agent:review"}
+        self.record_dispatch("designer", "design_reviewer")
+        for identity in self.state["agent_sessions"].values():
+            with self.subTest(identity=identity):
+                self.record_execution()
+                self.state["stage_execution"]["coordinator"] = identity
+                self.assert_blocked(self.run_check(), "stage_execution.coordinator 必须独立")
+        self.record_execution()
+        self.assert_pass(self.run_check())
+
+    def test_direct_fallback_requires_reason_and_cannot_claim_coordinator(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "agent:p"}
+        self.record_dispatch("pm")
+        for reason in (None, "", "<实际原生嵌套限制与证据>", 0):
+            with self.subTest(reason=reason):
+                self.record_execution("direct")
+                self.state["stage_execution"]["fallback_reason"] = reason
+                self.assert_blocked(self.run_check(), "stage_execution.fallback_reason")
+        for key in ("coordinator", "handoff"):
+            with self.subTest(key=key):
+                self.record_execution("direct")
+                self.state["stage_execution"][key] = "agent:coordinator-stage2"
+                self.assert_blocked(self.run_check(), "直接派工不存在协调器")
+        self.record_execution("direct")
+        self.assert_pass(self.run_check())
+
+    def test_skipped_design_stage_cannot_carry_previous_execution_record(self):
+        self.make_full(design=False)
+        self.truncate(3)
+        self.state["mode"] = 2
+        self.state["stage_execution"] = {"stage": 2, "strategy": "coordinated",
+                                         "coordinator": "agent:coordinator-stage2",
+                                         "handoff": "test-call:stage2-coordinator; returned:test-handoff-stage2"}
+        self.assert_blocked(self.run_check(), "stage_execution.stage 必须对应当前阶段 3")
+        self.state["stage_execution"] = {"stage": 3, "strategy": ""}
+        self.assert_pass(self.run_check())
+
+    def test_role_switch_mode_cannot_claim_coordinated_or_direct_execution(self):
+        self.make_full(design=False)
+        for strategy in ("coordinated", "direct"):
+            with self.subTest(strategy=strategy):
+                self.record_execution(strategy)
+                self.assert_blocked(self.run_check(), "stage_execution.strategy 必须留空")
+        self.state["stage_execution"] = {"stage": 11, "strategy": ""}
         self.assert_pass(self.run_check())
 
     def test_delegated_task_types_select_required_developers(self):

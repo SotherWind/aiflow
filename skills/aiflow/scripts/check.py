@@ -642,6 +642,8 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
     """核对角色交接与身份隔离；会话 ID 本身不能证明子代理实际执行过。"""
     mode = state.get("mode")
     if mode not in (2, 3):
+        if mode == 1:
+            check_stage_execution(state, stage, mode, {}, False)
         return
     sessions = required_dict(state, "agent_sessions")
     roles = ("analyst", "pm", "designer", "architect", "fe", "be", "tester", "operator", "design_reviewer")
@@ -716,6 +718,57 @@ def check_agent_sessions(state, stage, task_types, repair_types=()):
             block("模式 3 的独立终验尚未通过")
         if missing_value(str(state.get("final_review_evidence") or "")):
             block("模式 3 缺少 final_review_evidence")
+
+    check_stage_execution(state, stage, mode, identities, bool(current_roles))
+
+
+def check_stage_execution(state, stage, mode, identities, required):
+    """核对本阶段执行方式的记录形状与身份；字段本身不能证明协调器或子智能体实际执行过。"""
+    # 旧项目没有这条记录时按旧直接派工兼容。
+    if "stage_execution" not in state:
+        return
+    record = state["stage_execution"]
+    if record == "":
+        record = {}
+    if not isinstance(record, dict):
+        block("state.yaml.stage_execution 必须是一层字典")
+        return
+    strategy = record.get("strategy")
+    if isinstance(strategy, str):
+        strategy = strategy.strip()
+    if strategy in (None, ""):
+        if required:
+            block("stage_execution.strategy 未记录；按实际执行写 coordinated 或 direct")
+        return
+    if mode == 1:
+        block("模式 1 是同一会话角色切换，stage_execution.strategy 必须留空，不能声称协调器或子智能体执行")
+        return
+
+    def filled(key):
+        value = record.get(key)
+        return isinstance(value, str) and not missing_value(value.strip())
+
+    recorded_stage = record.get("stage")
+    if not isinstance(recorded_stage, int) or isinstance(recorded_stage, bool) or recorded_stage != stage:
+        block("stage_execution.stage 必须对应当前阶段 %d；不能沿用上一阶段或跳过阶段的执行记录" % stage)
+    if strategy == "coordinated":
+        coordinator = record["coordinator"].strip() if filled("coordinator") else ""
+        if not coordinator:
+            block("stage_execution.coordinator 必须是本阶段协调器的实际 ID，不能使用占位内容")
+        elif coordinator in identities.values():
+            block("stage_execution.coordinator 必须独立于全部专业角色、评审者与 developer 身份")
+        if not filled("handoff"):
+            block("stage_execution.handoff 缺少主控派工与协调器返回的实际依据")
+        elif record["handoff"].strip() in set(identities.values()) | {coordinator}:
+            block("stage_execution.handoff 不能只填会话 ID；须记录本阶段派工调用与协调器返回依据")
+    elif strategy == "direct":
+        if not filled("fallback_reason"):
+            block("stage_execution.fallback_reason 缺少原生嵌套不可用的实际限制与依据")
+        for key in ("coordinator", "handoff"):
+            if record.get(key) not in (None, ""):
+                block("stage_execution.strategy 为 direct 时不能记录 %s；直接派工不存在协调器" % key)
+    else:
+        block("stage_execution.strategy 必须为 coordinated 或 direct")
 
 
 def check_delivery_form(prd_text, state):
