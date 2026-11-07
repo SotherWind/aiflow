@@ -1,0 +1,15 @@
+{
+  "generated_by": "scripts/bundle_skills.py",
+  "bundle_version": "0.1.0",
+  "protocol_version": 1,
+  "roles": {
+    "analyst": "aiflow-analyst",
+    "pm": "aiflow-product",
+    "designer": "aiflow-design",
+    "architect": "aiflow-architect",
+    "fe": "aiflow-frontend",
+    "be": "aiflow-backend",
+    "tester": "aiflow-test",
+    "operator": "aiflow-release"
+  }
+}

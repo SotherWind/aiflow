@@ -1,0 +1,21 @@
+{
+  "generated_by": "scripts/bundle_skills.py",
+  "skill": "aiflow-product",
+  "role": "pm",
+  "bundle_version": "0.1.0",
+  "protocol_version": 1,
+  "resources": {
+    "references/execution.md": "aaeb5484e6b29d8bd19cd00535be8fae7f6947da6bd4a5f4f70055b784e4ea8f",
+    "LICENSE": "9de1c9c06786a90620f3bcd91161379e80ced4af8731db4fba807d9213a091bb",
+    "references/visual.md": "db76d922902a3ea1a9efeb4dfbc6e37e65463a0e3d4f6a2b7d99f98e0de29cb6",
+    "templates/prototype-kit/build.py": "dfb774e72977f48efdbffe05de6f36c9502d5a5257b9ce27305c77a0e6e9fc80",
+    "templates/prototype-kit/layout-check.js": "f6daf6dc74f1b8f9dec7835db50620e4fb2d1ff5a190fbe92a108cd74f5166ea",
+    "templates/prototype-kit/spec-check.js": "db61ca432a8e451eee111cb8a369fb3d761e7cde8ac59ad72f9cf875c4dea8a5",
+    "templates/prototype-kit/_src/_template.html": "e40d42f01dee8f4ae3d80dc1ff46fda697f7b6ee0e5e5588d594148869a0d03e",
+    "templates/prototype-kit/_src/kit.css": "e9061c3f9bf2b9e848da40e35d1e7c273f4c28fd68a65ae1a1aacd307de2a41f",
+    "templates/prototype-kit/_src/presets/element-plus.css": "b4756d327d6ec05a766cfbff44c6889cbe09eb3614bb8537b3d07083470d838d",
+    "scripts/parity/kit.html": "b89c5ff8ec99eb834b5c465d3a0b1e1a291992267a3f92ef13c66323310c15ba",
+    "scripts/parity/element-plus.html": "c2d820073cd7d66060989699ba3306c1d99d36595affe8090c83ddca2312007f",
+    "scripts/parity/parity.js": "2e2e7fe7ade8c002fab0d46a84c72677c3b0bec07ab6341aa5f08c9618ca9bd0"
+  }
+}

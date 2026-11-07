@@ -1,0 +1,12 @@
+{
+  "generated_by": "scripts/bundle_skills.py",
+  "skill": "aiflow-release",
+  "role": "operator",
+  "bundle_version": "0.1.0",
+  "protocol_version": 1,
+  "resources": {
+    "references/execution.md": "aaeb5484e6b29d8bd19cd00535be8fae7f6947da6bd4a5f4f70055b784e4ea8f",
+    "LICENSE": "9de1c9c06786a90620f3bcd91161379e80ced4af8731db4fba807d9213a091bb",
+    "references/development.md": "6505d397dad47f185571b63e2ec78e32fdd1f1ece8255a75e0a8d662462c1c29"
+  }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- 页面骨架：复制为 _src/P1-xxx.html 后填写，运行 python build.py 生成内联样式的页面。规范见 references/prototype.md -->
+<html lang="zh-CN"><head><meta charset="utf-8"><title>P1 页面名 · 原型图</title><link rel="stylesheet" href="kit.css"></head>
+<body><div class="doc">
+<div class="doc-head"><div><h1>P1 页面名</h1><div class="meta">角色 · 访问方式　｜　依据 facts vN　｜　服务 A1、A2</div></div>
+<nav><a href="index.html">总览</a><a href="global.html">全局说明</a></nav></div>
+<p class="legend">界面按 .aiflow/design-system.md 的设计规范画（没有规范时用组件库默认样式），黄色圆圈数字是标注，对应右侧说明。</p>
+
+<div class="board" id="f1"><div>
+<div class="frame-title">画面 1 · 主状态</div>
+<div class="canvas">
+  <div class="hd"><div class="l"><span class="logo"><span class="logo-mark"></span>系统名</span><span class="menu-item on">菜单</span></div><div class="r"><span class="avatar">张</span></div></div>
+  <div class="main">
+    <div class="crumb">首页<span class="sep">/</span><b>当前页</b></div>
+    <div class="ptitle an"><i class="mk">1</i>页面标题 <span class="tag primary">状态</span></div>
+    <div class="card"><div class="card-hd">卡片标题</div><div class="card-bd">
+      <div class="fi"><label class="req">字段名</label><div class="inp">请输入</div></div>
+      <div class="row"><span class="btn pri">主操作</span><span class="btn">次操作</span></div>
+    </div></div>
+  </div>
+</div></div>
+<div class="spec"><h3>标注说明</h3><ol>
+  <li><i class="mk">1</i><div>什么时候显示、字段规则、点了之后怎么样、谁能操作、失败时提示什么。<div class="refs">R1 · A1</div></div></li>
+</ol></div></div>
+
+<h2 class="states-title">其他状态</h2>
+<p class="states-note">空、加载、出错、无权限，以及这一页特有的状态；不适用的写明原因。</p>
+<div class="states">
+  <div class="state"><div class="cap">空</div><div class="mini"><div class="empty"><span class="box"></span>暂无数据</div></div></div>
+  <div class="state"><div class="cap">加载中</div><div class="mini"><div class="skel"></div><div class="skel"></div></div></div>
+  <div class="state"><div class="cap">加载失败</div><div class="mini"><div class="result"><span class="ic err">!</span><h3>加载失败</h3><span class="btn">重试</span></div></div></div>
+</div>
+</div></body></html>

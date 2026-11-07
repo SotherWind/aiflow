@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- 组件对照的样式包一侧：用 kit.css（加 ?preset=名 时再加样式预设）画出常用组件，和组件库一侧（element-plus.html 等）逐个对比。
+     每个 data-pair 的编号和组件库一侧一一对应；parity.js 里的 PAIRS 写了两边各量哪个元素。用法见 references/design-system.md「样式包和组件库对照」。 -->
+<html lang="zh-CN"><head><meta charset="utf-8"><title>组件对照 · 样式包</title>
+<script>
+  // 样式按顺序叠加：kit.css → 样式预设（?preset=名）→ 项目自己的样式（?css=地址，可以写多个，如项目的 _src/theme.css）
+  (function () {
+    var q = new URLSearchParams(location.search), v = 'v=' + Date.now(), base = '../../templates/prototype-kit/_src/';
+    var hrefs = [base + 'kit.css'];
+    if (q.get('preset')) hrefs.push(base + 'presets/' + encodeURIComponent(q.get('preset')) + '.css');
+    hrefs = hrefs.concat(q.getAll('css'));
+    var left = hrefs.length;
+    hrefs.forEach(function (h) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet'; link.href = h + (h.indexOf('?') < 0 ? '?' : '&') + v;
+      link.onload = link.onerror = function () { if (--left === 0) window.__ready = true; };
+      document.head.appendChild(link);
+    });
+  })();
+</script>
+<style>
+  body { background:var(--layout); }
+  .pairs { display:grid; grid-template-columns:repeat(3, 340px); gap:16px; padding:20px; }
+  .pair { position:relative; padding:12px; background:var(--surface); }
+  .pair.wide { grid-column:span 3; }
+</style></head>
+<body><div class="pairs" data-check>
+  <div class="pair" data-pair="btn"><span class="btn">取消</span></div>
+  <div class="pair" data-pair="btn-pri"><span class="btn pri">提交</span></div>
+  <div class="pair" data-pair="btn-lg"><span class="btn pri lg">提交</span></div>
+  <div class="pair" data-pair="btn-sm"><span class="btn sm">查看</span></div>
+  <div class="pair" data-pair="btn-danger"><span class="btn danger">驳回</span></div>
+  <div class="pair" data-pair="btn-link"><span class="btn link">查看</span></div>
+  <div class="pair" data-pair="input"><div class="inp">请输入标题</div></div>
+  <div class="pair" data-pair="input-lg"><div class="inp lg">请输入账号</div></div>
+  <div class="pair" data-pair="textarea"><div class="inp ta">请描述问题</div></div>
+  <div class="pair" data-pair="select"><div class="inp sel">全部状态</div></div>
+  <div class="pair" data-pair="label"><div class="fi"><label class="req">标题</label><div class="inp">请输入标题</div></div></div>
+  <div class="pair" data-pair="ferr"><div class="fi"><div class="inp err"></div><div class="ferr">请填写标题</div></div></div>
+  <div class="pair" data-pair="tag"><span class="tag warning">待受理</span></div>
+  <div class="pair" data-pair="tag-info"><span class="tag info">已关闭</span></div>
+  <div class="pair" data-pair="badge"><span>站内信</span> <span class="badge">3</span></div>
+  <div class="pair" data-pair="avatar"><span class="avatar">张</span></div>
+  <div class="pair" data-pair="alert"><div class="alert"><div>客服已处理完成，请确认问题是否解决。</div></div></div>
+  <div class="pair" data-pair="msg"><span class="msg" style="position:static;transform:none">工单状态已变化，请刷新后再操作</span></div>
+  <div class="pair" data-pair="pager"><div class="pager" style="justify-content:flex-start;margin:0"><span class="pg on">1</span><span class="pg">2</span></div></div>
+  <div class="pair" data-pair="timeline"><ul class="tl"><li>客服受理了工单<div class="t">2026-11-01 10:00</div></li><li class="green">客服处理完成<div class="t">2026-11-01 11:20</div></li></ul></div>
+  <div class="pair" data-pair="result"><div class="result"><span class="ic">✓</span><h3>提交成功</h3><p class="t2">已为你生成工单</p></div></div>
+  <div class="pair wide" data-pair="card"><div class="card"><div class="card-hd">处理记录</div><div class="card-bd">卡片内容</div></div></div>
+  <div class="pair wide" data-pair="table"><table class="tbl"><tr><th>工单号</th><th>标题</th></tr><tr><td>T-20261101-0012</td><td>打印机无法连接</td></tr></table></div>
+  <div class="pair wide" data-pair="dialog" style="height:240px"><div class="mask"><div class="modal"><h4>驳回处理结果</h4><div>请写明哪里还没解决</div><div class="ft"><span class="btn">取消</span><span class="btn pri">提交驳回</span></div></div></div></div>
+  <div class="pair" data-pair="btn-dis"><span class="btn dis">驳回</span></div>
+  <div class="pair" data-pair="btn-gap"><div class="row"><span class="btn pri">受理</span><span class="btn">转交</span></div></div>
+  <div class="pair" data-pair="input-focus"><div class="inp focus v">打印机无法连接</div></div>
+  <div class="pair" data-pair="chk"><span class="chk">只看已升级</span></div>
+  <div class="pair" data-pair="crumb"><div class="crumb">工单<span class="sep">/</span><b>工单列表</b></div></div>
+  <div class="pair" data-pair="crumb-link"><div class="crumb"><a href="#">工单</a><span class="sep">/</span><b>T-20261031-0021</b></div></div>
+  <div class="pair" data-pair="desc"><dl class="desc"><dt>电话</dt><dd>138 0013 8000</dd><dt>邮箱</dt><dd>li.ming@example.com</dd></dl></div>
+  <div class="pair" data-pair="empty"><div class="empty"><span class="box"></span>暂无工单</div></div>
+  <div class="pair" data-pair="skel"><div class="skel"></div><div class="skel"></div></div>
+  <div class="pair wide" data-pair="menu"><div class="hd light"><div class="l"><span class="menu-item on">工单</span><span class="menu-item">统计</span></div></div></div>
+  <div class="pair wide" data-pair="tabs"><div class="tabs"><span class="on">待受理 12</span><span>我的处理中 3</span></div></div>
+  <div class="pair wide" data-pair="steps"><div class="steps"><span class="step done"><span class="dot">1</span><span class="tt">已提交</span></span><span class="step done"><span class="dot">2</span><span class="tt">处理中</span></span><span class="step cur"><span class="dot">3</span><span class="tt">待你确认</span></span><span class="step"><span class="dot">4</span><span class="tt">已关闭</span></span></div></div>
+  <div class="pair wide" data-pair="pop" style="height:160px"><div class="pop" style="top:12px;right:auto;left:12px"><div class="ph">站内信 · 未读 2</div><div class="it">工单 T-20261101-0012 已超时</div></div></div>
+</div></body></html>

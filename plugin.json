@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aiflow",
+  "version": "0.1.0",
+  "description": "AI 全流程交付及八个可独立使用的专业角色",
+  "license": "MIT",
+  "author": {
+    "name": "SotherWind"
+  }
+}

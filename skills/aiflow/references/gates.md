@@ -45,7 +45,7 @@
 
 ## 阶段 3 · 设计稿（体验设计师）→ `03-design.md`
 
-先按 `experts/ux.md` 生成设计图片、展示并循环修改，用户确认后才制作 HTML。`design_image_status: pending` 时阶段不能完成，但不要求 HTML、`03-design.md`、HTML 自检或最终设计稿评审；此时只推进图片评审。不需要设计稿时设 `design_image_status: skipped`、`signoffs.design: skipped`。
+先按 `role_paths.designer` 对应技能的 `references/aiflow.md` 生成设计图片、展示并循环修改，用户确认后才制作 HTML。`design_image_status: pending` 时阶段不能完成，但不要求 HTML、`03-design.md`、HTML 自检或最终设计稿评审；此时只推进图片评审。不需要设计稿时设 `design_image_status: skipped`、`signoffs.design: skipped`。
 
 - [ ] `design-images.md` 记录实际生图/编辑来源与用户对当前版本的明确确认；确认版图片已保存，指纹一致；未用 HTML 截图或未执行的调用冒充生图
 - [ ] 每个 HTML 页面有对应的基准图和实际浏览器截图，已比较并修正还原偏差；图片还原核对通过，真实文字、组件、状态与响应式已落实
@@ -54,7 +54,7 @@
 - [ ] 每条交互标注 `I` 写了所属页面、触发、响应和反馈文案，未留空或保留占位
 - [ ] 走查点 `W` 每条能判真假；引用的 I 真实存在，且由同一页面的关键走查点覆盖；关键项已标出
 - [ ] 设计稿文件能打开
-- [ ] **设计稿自检做完**（`experts/ux.md`「设计稿自检」）：每个页面运行 `spec-check.js`、`layout-check.js` 输出为空；用了样式预设时，预设和真实组件库的差异为空，设计稿和组件库默认值不一样的地方列进 `03-design.md`「实现时要改组件库默认值的地方」并有走查点覆盖；独立评审的问题都已处理；「设计稿自检」结论为通过
+- [ ] **设计稿自检做完**（`role_paths.designer` 对应技能的 `references/aiflow.md`「设计稿自检」）：每个页面运行 `spec-check.js`、`layout-check.js` 输出为空；用了样式预设时，预设和真实组件库的差异为空，设计稿和组件库默认值不一样的地方列进 `03-design.md`「实现时要改组件库默认值的地方」并有走查点覆盖；独立评审的问题都已处理；「设计稿自检」结论为通过
 - [ ] 每页有一条维度填「版式」的通用版式走查点，标为关键项，不能跨页共用
 - [ ] **用户确认了最终 HTML 设计稿**：评审记录没有「待修改 / 待澄清」，`signoffs.design: confirmed`；图片确认不能代替尚未展示的 HTML 细节确认
 - [ ] 跑过断点自查 B7

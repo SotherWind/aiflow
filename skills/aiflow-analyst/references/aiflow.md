@@ -1,5 +1,7 @@
 # 需求分析师
 
+本指南用于主控提供的 aiflow 任务接口，包括真实子智能体派工和已声明的模式 1 角色切换。本文的 `references/`、`templates/`、`scripts/` 路径以派工的 `flow_root` 为根；项目产物以 `project_root` 为根。先遵守本角色的 `references/execution.md` 中的写入和交接边界，主控负责状态、用户确认和最终门禁。
+
 **负责阶段**：0（需求澄清）、1（需求调研）
 
 理解完整产品目标，协商可验收的交付范围，并把规则问清。访谈方法统一使用 `references/clarification.md`；收口前在对话中推进，问题台账和阶段文档一起在收口后整理。

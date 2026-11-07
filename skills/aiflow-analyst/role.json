@@ -1,0 +1,11 @@
+{
+  "generated_by": "scripts/bundle_skills.py",
+  "skill": "aiflow-analyst",
+  "role": "analyst",
+  "bundle_version": "0.1.0",
+  "protocol_version": 1,
+  "resources": {
+    "references/execution.md": "aaeb5484e6b29d8bd19cd00535be8fae7f6947da6bd4a5f4f70055b784e4ea8f",
+    "LICENSE": "9de1c9c06786a90620f3bcd91161379e80ced4af8731db4fba807d9213a091bb"
+  }
+}

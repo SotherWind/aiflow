@@ -2,7 +2,25 @@
 
 一套把需求推到上线的流程。主智能体负责沟通与调度，八个专业角色默认由独立子智能体按十二阶段执行，配合用户确认、选型锁定、设计还原度、bug 清零和回归等门禁。
 
-配套阅读：`SKILL.md`（规范）、`references/`（规则）、`experts/`（角色）、`templates/`（记录格式）。
+配套阅读：`SKILL.md`（主控规范）、`references/`（流程规则）、`templates/`（记录格式）。八个角色位于同级的 `aiflow-*` 技能目录，各自的 `SKILL.md` 提供独立用法，`references/aiflow.md` 保留协作阶段要求。
+
+## 安装主控与角色
+
+推荐使用跨工具的通用整套安装，无需宿主提供插件市场：
+
+```bash
+npx skills add SotherWind/aiflow --skill '*'
+```
+
+安装工具根据当前环境检测目标；也可显式添加 `-a codex`、`-a claude-code`、`-a cursor` 或 `-a opencode` 等，更多标识见 [skills CLI 支持列表](https://github.com/vercel-labs/skills/blob/main/docs/agents.md)。默认安装到当前项目，需要全局使用时加 `-g`。只需要单角色时选择该角色，例如 `npx skills add SotherWind/aiflow --skill aiflow-frontend -a cursor -y`。
+
+原生插件是另一种整套安装入口。本仓库同时提供开放 Agent Plugins 格式和 Claude 兼容清单；Codex、Claude Code 的具体命令见 [仓库安装说明](https://github.com/SotherWind/aiflow#安装)。Cursor 官方也支持开放格式，但其原生插件入口尚未实测，其他宿主按各自官方说明操作。
+
+安装目标支持与流程执行能力分开核对：本项目已实测通用 CLI 的 Codex 目标安装及两个角色执行场景，插件清单也已通过校验；其他宿主客户端和原生插件的完整运行尚未逐个验证。子智能体、生图、浏览器等能力按宿主实际情况使用，不能从安装成功推断所有阶段都能完成。
+
+主控的 `--skill aiflow` 不会让 CLI 自动补装角色。开始工作前运行 `python "<本 skill 目录>/scripts/resolve_roles.py"`，成功时返回本次派工使用的 `flow_root` 和 `role_paths`；角色不在同级目录时可按宿主实际技能清单追加 `--skills-dir`。同一主控与角色使用同一发布版本，缺失或不一致时先修复安装。
+
+从旧单技能版本升级时安装整套九个目录，已有 `.aiflow/` 项目沿用原状态、确认和门禁，不需要迁移数据；换阶段时按新角色路径重新派工。用户直接调用单角色不会因为发现 `.aiflow/` 就获得写主控状态的权限。
 
 ## 五分钟上手
 
@@ -135,9 +153,16 @@ python "<本 skill 目录>/scripts/check.py" "<项目目录>"
 
 改动澄清策略时，另用隔离目录和独立上下文试跑一句话请求及后续答复，检查实际覆盖、依赖、推荐和停止行为；保存过程记录，不能用固定文案匹配或门禁用例数量证明回复质量。
 
-另有真实 Chromium 的桌面、手机视口回归，覆盖版式偏移、换行溢出、规范取值、隐藏与标注层、根节点检查，以及固定版本的 70 项组件对照、故意改尺寸和缺失组件反例。后续重点：
+另有真实 Chromium 的桌面、手机视口回归，覆盖版式偏移、换行溢出、规范取值、隐藏与标注层、根节点检查，以及固定版本的 70 项组件对照、故意改尺寸和缺失组件反例。
 
-- 用一个真实纵切试跑阶段 4–11，保留代码执行、缺陷修复、发布与回滚演练的实际证据。
+2026-11-07 已完成一次真实单业务对象项目从阶段 4 到阶段 11 的本机试跑。代码开发、浏览器走查、缺陷修复与独立复测、全量回归、不同模型终验、离线安装、备份恢复、不同真实镜像回滚和发布后观察均保留实际执行证据，各阶段最终门禁退出码均为 0。
+
+本次沿用已确认的 HTML 设计，没有重新执行从零开始的阶段 0–3、先生成设计图片再制作 HTML 的分支、模式 1 或原生嵌套受限的降级分支。Windows PowerShell 和 Linux 容器路径已实际运行，POSIX 主机运维入口仅完成语法检查。一个项目跑通的结论只适用于它实际经过的路径。
+
+后续重点：
+
+- 从新需求开始试跑阶段 0–3，验证完整访谈、设计图片评审及 HTML 还原。
+- 在对应环境实跑模式 1、嵌套受限的降级路径和 POSIX 主机发布入口。
 
 ## 目录
 
@@ -158,11 +183,11 @@ references/
   gates.md            每阶段门禁 + 清零门禁 + 上线门禁
   breakpoints.md      七条断点自查 + 日志模板
   change.md           需求变更的传播规则
-experts/              八个角色，各含「做什么 / 自检 / 常见失败 / 提问边界」
-  analyst pm ux architect fe be tester operator
+roles.json            八个同级角色技能的版本与路径定位清单
 templates/            二十份初始文件（含 state、问题台账、选型与可选前后端开发规范；架构正文没有模板，由 PRD 推导）+ 原型样式包 prototype-kit（含 layout-check.js 版式检查、spec-check.js 规范检查）
 scripts/
   check.py            漂移检查：漏 / 编 / 确认 / 状态一致 / 门禁
+  resolve_roles.py    检查角色版本与资源，返回实际安装路径
   parity/             样式包和真实组件库对照（kit.html、element-plus.html、parity.js）
 tests/
   test_check.py       正常放行与假绿反例回归测试

@@ -1,8 +1,10 @@
 # 后端开发工程师
 
+本指南用于主控提供的 aiflow 任务接口，包括真实子智能体派工和已声明的模式 1 角色切换。本文的 `references/`、`templates/`、`scripts/` 路径以派工的 `flow_root` 为根；项目产物以 `project_root` 为根。先遵守本角色的 `references/execution.md` 中的写入和交接边界，主控负责状态、用户确认和最终门禁。
+
 **负责阶段**：6（全部 BE/JOB 任务）、9（BE/JOB 缺陷）
 
-模式 2/3 按 `references/orchestration.md` 接收派工。本文要求写入开发日志的内容，整理为逐任务结果返回，由主会话统一落入 `06-dev-log.md`；模式 1 可直接记录。状态、确认与问题台账也由主会话更新。
+模式 2/3 按 `references/orchestration.md` 接收派工；逐任务开发记录和证据返回派工方，`06-dev-log.md` 的汇总与写入边界遵循该协议。模式 1 可直接记录。状态、确认与问题台账由主会话更新。
 
 ## 你的工作是什么
 

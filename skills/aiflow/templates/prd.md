@@ -60,7 +60,7 @@
 
 - 设计规范：<沿用 XX / 无，按 Ant Design 默认主题>（需要原型或设计稿时必填，记录在 `.aiflow/design-system.md`）
 
-> 判断依据见 `experts/pm.md` 与 `experts/ux.md`。用户确认后主会话同步 `prototype_required`、`design_required`；不需要设计时 `design_image_status: skipped`，需要时为 `pending`，阶段 3 先看图确认再制作 HTML。
+> 判断依据见 `aiflow-product` 与 `aiflow-design` 各自的 `references/aiflow.md`，实际角色目录由主控的 `role_paths` 提供。用户确认后主会话同步 `prototype_required`、`design_required`；不需要设计时 `design_image_status: skipped`，需要时为 `pending`，阶段 3 先看图确认再制作 HTML。
 
 ## 八、澄清结论
 

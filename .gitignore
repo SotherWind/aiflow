@@ -1,4 +1,4 @@
-# 仓库只放 skill 本身：skills/、README.md、LICENSE、.gitignore、.gitattributes。
+# 仓库保留技能、共享源码、分发脚本、测试与插件清单。
 # 下面这些是本地工作材料，留在本机，不进仓库。
 
 # 分享材料
