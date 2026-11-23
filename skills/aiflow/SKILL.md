@@ -17,6 +17,7 @@ metadata:
 | `/aiflow <一句话需求>` | 从阶段 0 的对话澄清开始，问清后再建文件 |
 | `/aiflow 继续` | 先核对并派工当前未完成阶段；当前阶段通过门禁后才进入下一阶段。需要执行的每个阶段都走下方「每阶段进场」 |
 | `/aiflow 状态` | 打印当前阶段、留档物、失效待复核产物、待确认、未解决问题、未关闭缺陷与走查问题单 |
+| `/aiflow 模型` | 按 `references/models.md` 只读展示阶段角色的模型规则、请求值、实际值与回退情况 |
 | `/aiflow 跳到 <阶段号>` | 允许跳，但先补前一阶段的留档物检查，缺失就拒绝 |
 | `/aiflow 回退 <阶段号>` | 按 `references/change.md` 保留快照、登记本阶段待重做及下游待复核产物、重置相关结果；不能只改阶段号 |
 | `/aiflow 改 <变更描述>` | 先澄清变更，再按 `references/change.md` 分类处理事实源、开发规范与技术栈；复核影响，已确认的变更重新确认 |
@@ -25,9 +26,19 @@ metadata:
 
 ### 角色安装检查
 
-开始执行新项目或继续、回退、变更工作前，先运行 `python "<本 skill 目录>/scripts/resolve_roles.py"`。它按 `roles.json` 定位同级的八个角色，检查身份、版本和随包资源，返回 `flow_root` 与 `role_paths` 的绝对路径；只读查询状态无需补装角色。角色位于宿主目录清单中的其他位置时，用 `--skills-dir "<实际技能父目录>"` 补充搜索，不猜测或写死用户主目录。
+每阶段执行前，按 `references/orchestration.md` 确定本次实际需要的角色，运行 `python "<本 skill 目录>/scripts/resolve_roles.py" --role <角色键>`；需要多个角色时重复 `--role`。新项目阶段 0 先检查 `--role analyst`；后续阶段按实际任务补查。它按 `roles.json` 检查所选角色的身份、版本和随包资源，返回 `flow_root` 与 `role_paths` 的绝对路径；只读查询状态无需补装角色。角色位于宿主目录清单中的其他位置时，用 `--skills-dir "<实际技能父目录>"` 补充搜索，不猜测或写死用户主目录。
 
 退出码为 0 才按返回路径派工；缺失或版本不一致时说明具体角色和补装方式，不用主控代写专业产物。整套安装使用 aiflow 插件，或 `npx skills add SotherWind/aiflow --skill '*' -a <当前工具>`；仅安装 `--skill aiflow` 不会自动安装角色。主控不把技能引用当成安装器，也不在使用过程中静默安装或覆盖其他技能。
+
+未带 `--role` 的解析命令用于检查整套八个角色；阶段执行采用所选角色的结果。无需部署的项目不检查或派出 `operator`，未安装运维不会阻塞其他阶段。角色路径表按阶段补充，所用角色均须实际解析成功。
+
+### 用户配置说明
+
+用户询问模型 JSON 字段、接入开发或设计规范、或需要填写参考时，读取 [配置指南](configuration.md)，按实际需要提供 `examples/` 中的完整示例。已有规范直接采用其适用内容；示例由用户按项目选择和修改，不自动作为已确认要求。
+
+### 可选阶段角色模型
+
+项目有 `.aiflow/models.json`、已有 `model_policy` 快照、用户指定外部配置或本次角色模型时，派工前读取 `references/models.md`，用 `scripts/resolve_models.py` 解析策略，并在原生创建子智能体时应用。协调器沿用本阶段快照向下派工；主控保存快照与实际模型证据，模型未知时如实标记。未配置时沿用宿主默认。阶段 0 收口前仍只在会话保存策略与证据。
 
 ### 首次激活先访谈
 
@@ -69,14 +80,15 @@ metadata:
 | 3* | 设计稿 | 体验设计师 | 设计图片及评审记录 → HTML + `03-design.md` | 图片；最终 HTML 设计稿 |
 | 4 | 技术架构 | 技术架构师 | `04-arch.md` + `04-mapping.md` + `.aiflow/tech-stack.md` | 技术栈 |
 | 5 | 任务拆分 | 技术架构师 | `05-tasks.md` | — |
-| 6 | 开发 | 前端开发 / 后端开发 | 代码 + `06-dev-log.md` | — |
+| 6 | 开发 | 前端开发 / 后端开发 | 代码 + `06-dev-log.md`；需接口对接时加 `06-integration.md` | — |
 | 7* | 设计走查 | 体验设计师 ⇄ 前端开发 | `07-walkthrough.md` | — |
-| 8 | 测试 | 测试工程师 | `08-test-report.md` | — |
+| 8 | 代码审阅与测试 | 测试工程师 | `08-test-report.md` | — |
 | 9 | 缺陷修复与复测 | 开发 ⇄ 测试 | `09-bugs.md` | — |
 | 10 | 全量回归 | 测试工程师 | `10-regression.md` | 有条件通过时 |
-| 11 | 上线 | 运维工程师 | `11-release.md` | — |
+| 11* | 上线 | 运维工程师（需要部署时） | `11-release.md` | — |
 
 > 带 `*` 的是条件节点：PRD 判断「设计稿：不需要」时，阶段 3 和阶段 7 跳过。产品原型同理，PRD 判断不需要时阶段 2 只出 PRD。
+> PRD 判断「发布部署：不需要」时，阶段 11 跳过，阶段 10 通过后交付。是否部署按本轮交付目标判断，Demo 也可能需要部署到演示环境。
 
 | 角色 | 独立技能 | 负责 | 不负责 |
 |---|---|---|---|
@@ -84,12 +96,21 @@ metadata:
 | 产品经理 | `aiflow-product` | 阶段 2：PRD、验收标准、状态机、产品原型 | 不定技术方案 |
 | 体验设计师 | `aiflow-design` | 阶段 3 设计稿、阶段 7 设计走查 | 不改代码 |
 | 技术架构师 | `aiflow-architect` | 阶段 4–5：技术栈推荐与确认、架构、契约、任务拆分 | 不写业务代码 |
-| 前端开发 | `aiflow-frontend` | 阶段 6、7、9：FE 任务、走查问题单、FE 缺陷 | 不改后端、契约与设计 |
+| 前端开发 | `aiflow-frontend` | 阶段 6、7、9：FE 任务、走查问题单、FE 缺陷与接口联调 | 不改后端、契约与设计 |
 | 后端开发 | `aiflow-backend` | 阶段 6、9：BE/JOB 任务与缺陷 | 不改前端与契约 |
-| 测试工程师 | `aiflow-test` | 阶段 8、9 复测、10：按任务测、派单、复测、回归 | 不改代码、不改断言 |
-| 运维工程师 | `aiflow-release` | 阶段 11：发布、回滚、上线检查 | 不改代码 |
+| 测试工程师 | `aiflow-test` | 阶段 8、9 复测、10：代码审阅、按任务测、派单、复测、回归 | 不改代码、不改断言 |
+| 运维工程师 | `aiflow-release` | 需要部署时执行阶段 11：推导部署条件、发布、回滚、上线检查 | 不改代码 |
 
 表中角色都可由用户独立调用；主流程派工统一指定 `mode: aiflow`，读取实际角色目录中的 `SKILL.md` 和 `references/aiflow.md`。独立调用的输入适配不改变主流程的前置条件。
+
+### 发布部署与交付收尾
+
+阶段 0 明确本轮交付到什么程度、是否包含实际部署，保留已知约束和部署资料位置；阶段 2 在 PRD「交付形态判断」记录「发布部署」及理由，随 PRD 确认后同步 `release_required`。具体连接、配置和权限在部署准备时按项目实际依赖推导。
+
+- `release_required: false`：`release_status: skipped`，不检查或派出运维，不生成 `11-release.md`；阶段 10 回归及其全部门禁通过后，在 `stage: 10` 交付代码、运行入口与说明、验证结果及已确认限制。
+- `release_required: true`：`release_status` 初始为 `planned`；阶段 10 通过后进入阶段 11，先检查 `--role operator`，由运维按其 `references/deployment.md` 读取项目和部署资料、推导并核验本次必要条件、经主会话澄清缺项，再在已有授权范围执行和观察。只有 `verified` 算部署交付完成。
+
+旧项目缺少 `release_required` 时沿用原有部署要求；重新确认交付形态时补录字段与 PRD 行，新一轮发布准备采用部署条件记录。变更交付范围按 `references/change.md` 归档与复核，不能只改状态绕过既有确认。
 
 ## 四、追问与确认
 
@@ -103,7 +124,7 @@ metadata:
 |---|---|---|---|
 | 范围 | 0 | `signoffs.scope` | 本轮做什么、不做什么 |
 | 需求 | 1 | `signoffs.requirement` | 规则都问清了，没有遗留问题 |
-| PRD | 2 | `signoffs.prd` | PRD 没问题，含要不要原型、要不要设计稿 |
+| PRD | 2 | `signoffs.prd` | PRD 没问题，含是否需要原型、设计稿和发布部署 |
 | 产品原型 | 2 | `signoffs.prototype` | 原型没问题；不需要时 `skipped` |
 | 设计图片 | 3，制作 HTML 前 | `design_image_status` + `design_image_fingerprint` | 当前生图版本的视觉方案已认可，允许据此制作 HTML |
 | HTML 设计稿 | 3 | `signoffs.design` | 最终设计稿没问题；不需要时 `skipped` |
@@ -164,6 +185,8 @@ metadata:
 
 粒度标准：**一个人能独立开发完、另一个人能独立验收的单元。** 通常对应一个接口或一个页面。
 
+前后端需对接时，阶段 4 先明确接口约定，阶段 5 在任务中判断并由主控写 `api_integration_required`、拆 INT 批次。阶段 6 按 `references/api-integration.md` 并行实现，后端按批交文档与可调用服务，协调器向 FE 续派全文审阅，通过后再派真实联调；问题修复后交 FE 复验，版本/文档变化重新交接。页面/mock 完成而联调未通过的 FE 任务仍为部分完成。
+
 任务编号贯穿全流程：
 
 - 开发日志按任务记：`T3(BE) 完成`
@@ -193,7 +216,9 @@ metadata:
 
 阶段 7 的走查问题单走同一个循环，复查人是体验设计师。
 
-阶段 9 的复测按 `templates/bugs.md` 逐轮追加 E/A、结果和证据，每个用例以最大轮次为准；初测失败报告保持不变，当前验收状态按 `role_paths.tester` 对应技能的 `references/aiflow.md` 的规则从复测和回归结果更新，不能改写历史来消除冲突。
+阶段 8 由测试角色按其 `references/code-review.md` 审阅本轮交付代码，在测试报告保留范围、版本、文件覆盖和发现证据；阶段 9 复查修复补丁。开发自检与独立审阅分别留证，代码审阅不替代实际测试。
+
+阶段 9 的验收复测按 `templates/bugs.md` 逐轮追加 E/A、结果和证据；已证实的纯技术缺陷按 `templates/technical-bug.md` 使用技术依据与检查项。二者均取每项最大轮次，全部必需验证通过才能关单。技术缺陷不参与业务验收状态计算，阶段 10 另做技术回归；初测报告保持不变，当前验收状态按测试角色阶段指南更新。
 
 ## 九、清零门禁（阶段 9 → 10）
 
@@ -205,7 +230,7 @@ metadata:
 
 任何一条不满足 → 停在阶段 9，不许往下走。
 
-**回归门禁只有一个判定**：结论为「通过」且无遗留条件，或结论为「有条件通过」且文档与 state 的条件逐项一致、用户原话和确认时间已记录，才允许上线；「不通过」、结论缺失或无法解析都直接退回。进入回归前 `pending_decisions` 必须为空；所有当前有效 A 及初测中关联它们的全部 E 必须重跑并通过，回归收尾时 `acceptance_results` 全部 `pass`。
+**回归门禁只有一个判定**：结论为「通过」且无遗留条件，或结论为「有条件通过」且文档与 state 的条件逐项一致、用户原话和确认时间已记录，才允许交付或进入上线阶段；「不通过」、结论缺失或无法解析都直接退回。进入回归前 `pending_decisions` 必须为空；所有当前有效 A 及初测中关联它们的全部 E 必须重跑并通过，回归收尾时 `acceptance_results` 全部 `pass`。
 
 ## 十、主智能体调度，专业角色独立执行
 
@@ -237,6 +262,7 @@ metadata:
 - 提问前调研：`references/research.md`（阶段 1，以及其他阶段需要外部案例或实现依据时读取）
 - 产品发现：`references/discovery.md`（阶段 0 展开产品决策树时读取）
 - 开发规范：`references/development-standards.md`（阶段 4 选型前、前后端开发及修复时读取）
+- 接口协作：`references/api-integration.md`（阶段 4–6 的契约、并行、文档交付、FE 全文审阅与真实联调；后续相关修复同样适用）
 - 技术栈：`references/tech-stack.md`（收集指定、主动推荐、用户确认、锁定与变更）
 - 断点自查：`references/breakpoints.md`（阶段 2 查 B1、B7，阶段 3 查 B7，阶段 4 查 B2/B3，阶段 6 查 B4，阶段 8 查 B5，阶段 9 查 B6）
 - 门禁：`references/gates.md`
@@ -263,11 +289,14 @@ metadata:
 | `templates/tech-stack.md` | 4 | `.aiflow/tech-stack.md`（独立选型记录，确认后锁定） |
 | `templates/tasks.md` | 5 | `artifacts/05-tasks.md` |
 | `templates/dev-log.md` | 6 | `artifacts/06-dev-log.md` |
+| `templates/integration.md` | 6（需要接口对接时） | `artifacts/06-integration.md`（批次交付、审阅、真实联调与问题） |
+| `templates/api-doc.md` | 6（已有完整文档可复用） | 项目内接口文档，如 `.aiflow/api/INT1.md` |
 | `templates/walkthrough.md` | 7（需要时） | `artifacts/07-walkthrough.md` |
 | `templates/test-report.md` | 8 | `artifacts/08-test-report.md` |
 | `templates/bugs.md` | 8–9 | `artifacts/09-bugs.md` |
+| `templates/technical-bug.md` | 8–9，有纯技术缺陷时 | 插入 `artifacts/09-bugs.md` 的技术缺陷详情 |
 | `templates/regression.md` | 10 | `artifacts/10-regression.md` |
-| `templates/release.md` | 11 | `artifacts/11-release.md` |
+| `templates/release.md` | 11（需要部署时） | `artifacts/11-release.md` |
 
 事实源是**业务语义的唯一事实源**；原型、设计、架构、任务和测试产物是受控下游输入，不得与 facts 冲突。产出必须引用编号（R1、A3、P1、T3）。
 
@@ -294,7 +323,7 @@ python "<本 skill 目录>/scripts/check.py" "<项目目录>"
 
 退出码：0 通过 / 1 有阻塞项 / 2 只有警告。**退出码不是 0 就不许进下一阶段。**
 
-脚本能查确认字段、自检结论和编号对应，查不了用户原话是否真实、浏览器检查是否实际执行、评审人是否独立。这些仍须保留真实消息和检查证据，不能把脚本通过当成已经执行过检查。
+脚本能查确认字段、自检结论、编号对应和技术缺陷的复测/回归记录，查不了用户原话是否真实、代码是否逐文件审过、浏览器检查是否实际执行、评审人是否独立。代码审阅范围与发现由主控按原始证据签收，不能把文件覆盖率或脚本通过当成审阅质量与实际执行的证明。
 
 ### 复述校验（脚本做不到的那部分）
 
@@ -330,9 +359,11 @@ aiflow/
 ├── SKILL.md              本文件
 ├── README.md             五分钟上手 + 从旧版迁移
 ├── references/
+│   ├── models.md         阶段角色模型配置、快照、宿主能力与执行证据
 │   ├── clarification.md  对话访谈（决策树、逐轮追问与共识）
 │   ├── clarification-records.md  收口后的台账与状态归档
 │   ├── orchestration.md  主智能体调度与八角色交接
+│   ├── api-integration.md  前后端并行、接口文档交付与真实联调
 │   ├── discovery.md      阶段 0 产品决策树与范围协商
 │   ├── research.md       提问前调研、竞品与开源实现比较
 │   ├── review.md         评审确认协议
@@ -345,24 +376,29 @@ aiflow/
 │   ├── breakpoints.md    七条断点自查
 │   └── change.md         需求变更的传播规则
 ├── roles.json            八个同级角色技能的版本与定位清单
-├── templates/            二十份初始文件 + 原型样式包 prototype-kit（含 state、问题台账、选型与可选开发规范；架构正文无模板）
+├── templates/            按需使用的初始文件 + 原型样式包 prototype-kit（架构正文无模板）
 ├── scripts/check.py      漂移与门禁检查
 ├── scripts/resolve_roles.py  角色安装与版本检查
+├── scripts/resolve_models.py 模型配置解析与只读派工预览
+├── scripts/model_records.py  模型执行记录与门禁校验
 └── tests/
     ├── test_check.py     正常放行与假绿反例测试
     └── browser/          版式、规范与真实组件对照回归（维护命令见 README）
 
 项目侧：
 <项目>/.aiflow/
+├── models.json   model-policies/   model_runs.jsonl  （可选模型策略与实际执行记录）
 ├── state.yaml   facts.md   questions.md   design-system.md   breakpoint-log.md
 ├── tech-stack.md                 （阶段 4 起必需）
 ├── design-images.md   design-images/  （阶段 3 图片版本、评审与确认版原图）
 ├── frontend-standards.md   backend-standards.md   （可选，也可配置其他路径）
 ├── prototype/   design/          （需要时）
+├── api/                          （可选接口文档位置，也可复用项目文档）
 ├── history/                     （变更前快照，不作为当前输入）
 └── artifacts/
     ├── 00-intake.md   01-research.md   02-prd.md   02-prototype.md
     ├── 03-design.md   04-arch.md   04-mapping.md   05-tasks.md
-    ├── 06-dev-log.md  07-walkthrough.md   08-test-report.md
+    ├── 06-dev-log.md  06-integration.md（需要接口对接时）
+    ├── 07-walkthrough.md   08-test-report.md
     └── 09-bugs.md     10-regression.md    11-release.md
 ```

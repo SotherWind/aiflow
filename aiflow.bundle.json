@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "aiflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "protocol_version": 1,
   "description": "AI 全流程交付及八个可独立使用的专业角色",
   "repository": "SotherWind/aiflow",
@@ -11,10 +11,19 @@
       "LICENSE": "LICENSE"
     },
     "development": {
-      "shared/development.md": "references/development.md"
+      "shared/development.md": "references/development.md",
+      "skills/aiflow/examples/frontend-standards.md": "examples/frontend-standards.md",
+      "skills/aiflow/examples/backend-standards.md": "examples/backend-standards.md"
+    },
+    "code-review": {
+      "shared/code-review.md": "references/code-review.md"
+    },
+    "deployment": {
+      "shared/deployment.md": "references/deployment.md"
     },
     "visual": {
       "shared/visual.md": "references/visual.md",
+      "skills/aiflow/examples/design-system.md": "examples/design-system.md",
       "skills/aiflow/templates/prototype-kit/build.py": "templates/prototype-kit/build.py",
       "skills/aiflow/templates/prototype-kit/layout-check.js": "templates/prototype-kit/layout-check.js",
       "skills/aiflow/templates/prototype-kit/spec-check.js": "templates/prototype-kit/spec-check.js",
@@ -26,6 +35,7 @@
       "skills/aiflow/scripts/parity/parity.js": "scripts/parity/parity.js"
     },
     "frontend-checks": {
+      "skills/aiflow/examples/design-system.md": "examples/design-system.md",
       "skills/aiflow/templates/prototype-kit/layout-check.js": "scripts/layout-check.js",
       "skills/aiflow/templates/prototype-kit/spec-check.js": "scripts/spec-check.js"
     }
@@ -35,9 +45,9 @@
     {"id": "pm", "skill": "aiflow-product", "title": "产品经理", "resources": ["common", "visual"]},
     {"id": "designer", "skill": "aiflow-design", "title": "体验设计师", "resources": ["common", "visual"]},
     {"id": "architect", "skill": "aiflow-architect", "title": "技术架构师", "resources": ["common", "development"]},
-    {"id": "fe", "skill": "aiflow-frontend", "title": "前端开发工程师", "resources": ["common", "development", "frontend-checks"]},
-    {"id": "be", "skill": "aiflow-backend", "title": "后端开发工程师", "resources": ["common", "development"]},
-    {"id": "tester", "skill": "aiflow-test", "title": "测试工程师", "resources": ["common", "development"]},
-    {"id": "operator", "skill": "aiflow-release", "title": "运维工程师", "resources": ["common", "development"]}
+    {"id": "fe", "skill": "aiflow-frontend", "title": "前端开发工程师", "resources": ["common", "development", "code-review", "frontend-checks"]},
+    {"id": "be", "skill": "aiflow-backend", "title": "后端开发工程师", "resources": ["common", "development", "code-review"]},
+    {"id": "tester", "skill": "aiflow-test", "title": "测试工程师", "resources": ["common", "development", "code-review"]},
+    {"id": "operator", "skill": "aiflow-release", "title": "运维工程师", "resources": ["common", "development", "deployment"]}
   ]
 }

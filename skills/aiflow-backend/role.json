@@ -2,11 +2,14 @@
   "generated_by": "scripts/bundle_skills.py",
   "skill": "aiflow-backend",
   "role": "be",
-  "bundle_version": "0.1.0",
+  "bundle_version": "0.2.0",
   "protocol_version": 1,
   "resources": {
-    "references/execution.md": "aaeb5484e6b29d8bd19cd00535be8fae7f6947da6bd4a5f4f70055b784e4ea8f",
+    "references/execution.md": "b1c7217169e438912637dd0862111eaac67445d66020981e26f49fdc2164e5b9",
     "LICENSE": "9de1c9c06786a90620f3bcd91161379e80ced4af8731db4fba807d9213a091bb",
-    "references/development.md": "6505d397dad47f185571b63e2ec78e32fdd1f1ece8255a75e0a8d662462c1c29"
+    "references/development.md": "7c2621613e2bb3fc73cca761a9d17da2bb759bed8d2ad80b760bdc544b746ae3",
+    "examples/frontend-standards.md": "edaf5390807eea25508f12222aac1c7b8790b6ba73e3be2c973571421c382c43",
+    "examples/backend-standards.md": "2a3191a6d16e746d71280d4a935e5fb169253a5c7833aac097db905a63a05950",
+    "references/code-review.md": "e5ac7cb368623fb71f7d7c9da1624a17649eea1424826221711b056db378375e"
   }
 }

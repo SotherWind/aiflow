@@ -2,17 +2,38 @@
 
 一套 Agent Skills：一个 aiflow 主控、八个可独立使用的专业角色。整套按十二阶段推进交付，也可以只安装需要的角色。
 
+开始使用：[安装](#安装) · [五分钟上手](skills/aiflow/README.md#五分钟上手) · [模型与规范配置指南](skills/aiflow/configuration.md) · [全部角色与身份配置](skills/aiflow/configuration.md#角色与身份完整清单)
+
 - 默认由主智能体沟通与调度，各专业角色使用独立子智能体；按阶段交接，前后端可在任务独立时并行，环境不支持时明确降级为角色切换
+- 可按项目、角色和阶段配置子智能体模型与推理强度，协调器和独立评审可单独设置；阶段快照固定本次策略，记录实际模型与显式回退，未配置时沿用宿主默认
+- 前后端先约定接口、并行实现，后端按批交付实际接口文档；前端整体审阅后连接真实服务联调，问题返修复验、版本变化重新交接，全部批次通过才完成开发
 - 所有角色遇到待决事项都按决策树逐轮追问；先在对话中问清、确认共识，再统一整理问题台账、状态与阶段文档
 - 提问前按需查证外部案例与成熟方案，带来源和取舍帮助用户决定；需求调研重点比较竞品、替代产品与开源实现
 - PRD、产品原型、设计稿都要你确认才往下走；你提的问题照着改，不清楚的继续问
 - 需要设计稿时先生成图片供用户评审，修改到确认后再按图制作 HTML，并用浏览器截图核对；前端开发完再走查实现与最终设计稿，还原度 ≥ 90% 且关键项通过才算通过
 - 每个阶段收尾跑门禁脚本，漏项、编造编号、版本过期、没经确认都会被拦下
+- 开发自检和独立代码审阅共用内置方法，记录变更范围、逐文件覆盖及发现证据；技术缺陷进入现有修复、复测和回归闭环
 - 支持用户提供前端、后端开发规范 Markdown，也支持项目和团队默认规范；已配置就遵循，开发及修复都留检查记录
 - 支持指定技术栈与框架；未指定部分主动推荐，已有项目优先建议沿用。展示组合、版本与取舍，用户确认后锁定，更换时重新确认
+- 运维按本轮实际部署需求启用；无需部署时回归通过即可交付。部署条件由项目资料与实际依赖推导，支持用户提供部署文档，只澄清缺项和待决事项
 - 回退与变更显式登记失效产物，检查旧结果是否已重置；保留历史快照，重做后重新确认，未关闭问题要迁移或明确处置
 
 > 预览版。真实试跑经过的路径与尚未验证的分支见 [验证范围](skills/aiflow/README.md#后续验证)。
+
+## 配置模型与项目规范
+
+[完整配置指南](skills/aiflow/configuration.md) 解释文件放哪里、模型 JSON 每个字段的类型与默认值、配置优先级、怎样交给 AI 使用和确认生效。配置属于正在交付的业务项目，无需修改已安装的技能源码。
+
+| 配置项 | 业务项目中的默认文件 | 使用说明 | 可复制的完整示例 |
+| --- | --- | --- | --- |
+| 阶段角色模型 | `.aiflow/models.json` | [字段解释、角色与阶段、选模验证](skills/aiflow/configuration.md#模型配置) | [基础模型 JSON](skills/aiflow/examples/models.json) |
+| 前端开发规范 | `.aiflow/frontend-standards.md` | [文件接入、优先级和执行检查](skills/aiflow/configuration.md#前后端开发规范) | [前端规范](skills/aiflow/examples/frontend-standards.md) |
+| 后端与 JOB 开发规范 | `.aiflow/backend-standards.md` | [文件接入、优先级和执行检查](skills/aiflow/configuration.md#前后端开发规范) | [后端规范](skills/aiflow/examples/backend-standards.md) |
+| 设计规范 | `.aiflow/design-system.md` | [令牌、布局、状态和生效检查](skills/aiflow/configuration.md#设计规范) | [设计规范](skills/aiflow/examples/design-system.md) |
+
+模型示例里的 `<…模型ID>` 需要替换为宿主实际支持的标识。规范示例已经填好参考规则，按项目删改后采用；已有规范可以保留原位置，把路径告诉 AI。技术栈与部署资料也有 [对话接入示例](skills/aiflow/configuration.md#技术栈与部署资料)。
+
+模型配置共支持八个专业角色和三个运行身份。[完整清单](skills/aiflow/configuration.md#角色与身份完整清单) 逐项列出配置键、兼容键、中文含义、使用阶段、是否有独立技能及示例值；[全量 JSON](skills/aiflow/examples/models-advanced.json) 将 11 项全部展开，按需删改即可。
 
 ## 安装
 
@@ -60,7 +81,7 @@ npx skills add SotherWind/aiflow --list
 npx skills add SotherWind/aiflow
 ```
 
-仅指定 `--skill aiflow` 只会安装主控，不会补装角色。主控开始执行前会检查八个角色、版本和资源完整性，缺项时给出补装提示。独立角色自带执行说明与所需资源，不依赖主控或其他角色；协作模式才读取主控的阶段协议。
+仅指定 `--skill aiflow` 只会安装主控，不会补装角色。主控每阶段执行前用 `resolve_roles.py --role <键>` 检查本次所需角色、版本和资源完整性，缺项时给出补装提示；无需部署的项目不要求运维。未指定 `--role` 的命令仍可检查整套八个角色。独立角色自带执行说明与所需资源，不依赖主控或其他角色；协作模式才读取主控的阶段协议。
 
 ### 原生插件整套安装（可选）
 
@@ -108,8 +129,8 @@ codex plugin add aiflow@aiflow
 | [aiflow-architect](skills/aiflow-architect/SKILL.md) | 技术选型、架构、契约、任务拆分 |
 | [aiflow-frontend](skills/aiflow-frontend/SKILL.md) | 前端开发、交互和页面缺陷修复 |
 | [aiflow-backend](skills/aiflow-backend/SKILL.md) | 后端接口、数据操作、JOB |
-| [aiflow-test](skills/aiflow-test/SKILL.md) | 测试、缺陷复测、回归 |
-| [aiflow-release](skills/aiflow-release/SKILL.md) | 发布、回滚、观察与验证 |
+| [aiflow-test](skills/aiflow-test/SKILL.md) | 代码审阅、测试、缺陷复测、回归 |
+| [aiflow-release](skills/aiflow-release/SKILL.md) | 按项目推导部署条件、澄清、发布、回滚与验证 |
 
 例如在 Codex 中用 `$aiflow-frontend 修复订单列表筛选`，直接依据项目代码和任务工作；用 `$aiflow 做一个设备巡检系统` 才进入全流程。插件宿主可能为入口显示命名空间，以其技能列表为准。
 
@@ -126,6 +147,8 @@ codex plugin add aiflow@aiflow
 
 见 [skills/aiflow/README.md](skills/aiflow/README.md)（上手）和 [skills/aiflow/SKILL.md](skills/aiflow/SKILL.md)（完整规范）。
 
+配置方式与示例统一见 [模型与项目规范指南](skills/aiflow/configuration.md)。使用 `/aiflow 模型`（Codex 为 `$aiflow 模型`）只读查看请求与实际模型；派工、阶段快照和执行记录的内部规则见 [模型执行协议](skills/aiflow/references/models.md)。
+
 ## 维护与验证
 
 `aiflow.bundle.json` 是版本、角色名单和资源分发的来源。角色的 `SKILL.md` 与 `references/aiflow.md` 直接维护；公共说明在 `shared/` 维护，原型工具仍在主控模板目录维护。修改后生成随包快照及插件清单：
@@ -141,6 +164,7 @@ python scripts/bundle_skills.py --check
 
 ```bash
 python -B tests/test_distribution.py
+python -B skills/aiflow/tests/test_models.py
 python skills/aiflow/tests/test_check.py
 ```
 

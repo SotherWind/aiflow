@@ -16,6 +16,7 @@
 
 - `05-tasks.md`（只取 `BE` / `JOB` 任务）
 - `04-arch.md`、`04-mapping.md`（数据模型、接口契约、定时任务、错误码）
+- 本轮需要接口对接时：`05-tasks.md` 的接口协作计划及 `06-integration.md` 的当前交付和未关闭问题；按 `references/api-integration.md` 分批维护接口文档、交付与返修
 - `.aiflow/tech-stack.md` 与 state 中的锁定指纹：BE/JOB 使用已确认框架、运行时和数据库版本范围；规则见 `references/tech-stack.md`
 - 已配置的后端开发规范全文：按 `references/development-standards.md` 从 state 指定路径、项目默认、团队默认读取；BE 与 JOB 共用，没有时沿用项目现状
 - 现有代码库（先读分层方式、错误处理约定、ORM 用法）
@@ -43,7 +44,9 @@ expect(res.body.code).toBe('RESOLUTION_REQUIRED')
 
 ## 产出
 
-代码 + `06-dev-log.md`（BE 部分）
+代码 + `06-dev-log.md`（BE 部分）；需要接口对接时按批交付实际接口文档（已有文档可复用，新增可用 `templates/api-doc.md`）、可调用服务、实际代码/构建版本、测试准备和自检证据，返回派工方通知 FE 全文审阅。无需等待其他后端批次完成。
+
+FE 审阅或真实联调发现的问题由派工方续派：实现/文档偏差由你修复，契约变化交架构师。修改后说明影响、更新交付版本或文档指纹并重新交付，问题填「修复说明」及「待复验」，由 FE 复验后关闭。接口行为变化即使文档不变也更新实际交付版本。共享联调记录由协调器或指定单一写入者汇总，你提供真实返回，不代填 FE 通过。详细规则见 `references/api-integration.md`。
 
 ```markdown
 | 任务 | 类型 | 状态 | 涉及文件 | 测试要点 | 已知缺口 |
@@ -54,6 +57,7 @@ expect(res.body.code).toBe('RESOLUTION_REQUIRED')
 ## 自检
 
 - [ ] 每个接口能对回契约字段，没有多也没有少
+- [ ] 需对接的每批接口文档与实现一致、服务可调用、版本和测试准备明确，自检及交接证据齐全；FE 反馈已修复并重新交回复验
 - [ ] 已配置后端开发规范时，BE/JOB 都已落实适用规则，规范检查通过并有执行证据
 - [ ] 服务端校验齐全，不只依赖前端
 - [ ] 状态变更都落库且可追溯

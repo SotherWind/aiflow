@@ -53,14 +53,17 @@
 
 ## 七、交付形态判断
 
+> 本表由门禁按名称读取。保留下列表头、交付物行名和「需要 / 不需要」取值；自定义叫法或范围说明写在理由栏。
+
 | 交付物 | 是否需要 | 理由 |
 |---|---|---|
 | 产品原型 | <需要 / 不需要> | <一句理由> |
 | 设计稿 | <需要 / 不需要> | <一句理由> |
+| 发布部署 | <需要 / 不需要> | <本轮交付目标、是否由本流程实际部署及理由> |
 
 - 设计规范：<沿用 XX / 无，按 Ant Design 默认主题>（需要原型或设计稿时必填，记录在 `.aiflow/design-system.md`）
 
-> 判断依据见 `aiflow-product` 与 `aiflow-design` 各自的 `references/aiflow.md`，实际角色目录由主控的 `role_paths` 提供。用户确认后主会话同步 `prototype_required`、`design_required`；不需要设计时 `design_image_status: skipped`，需要时为 `pending`，阶段 3 先看图确认再制作 HTML。
+> 判断依据见 `aiflow-product` 与 `aiflow-design` 各自的 `references/aiflow.md`，实际角色目录由主控的 `role_paths` 提供。用户确认后主会话同步 `prototype_required`、`design_required`、`release_required`；不需要设计时 `design_image_status: skipped`，需要时为 `pending`，阶段 3 先看图确认再制作 HTML。不需要部署时 `release_status: skipped`，阶段 10 通过后交付代码、运行说明和验证结果；需要部署时为 `planned`，阶段 11 再由运维核对本项目实际所需条件。
 
 ## 八、澄清结论
 

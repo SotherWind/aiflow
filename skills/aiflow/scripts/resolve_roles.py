@@ -79,14 +79,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skills-dir", action="append", default=[],
                         help="An additional installed-skills parent directory from the host catalog")
-    parser.add_argument("--role", action="append", default=[], help="Check only this role key")
+    parser.add_argument("--role", action="append", default=[],
+                        help="Check this role key; repeat for roles needed by the current stage. Omit to check the full bundle.")
     args = parser.parse_args()
     try:
         result = resolve_roles(extra_roots=args.skills_dir, requested=args.role)
     except (OSError, ValueError, KeyError, TypeError) as error:
         result = {"ok": False, "error": str(error)}
     if not result["ok"]:
-        result["repair"] = "Install the complete aiflow bundle from the same release, or provide the host's actual skill directories with --skills-dir."
+        result["repair"] = "Install the missing or compatible roles from the same aiflow release, or provide the host's actual skill directories with --skills-dir."
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
 

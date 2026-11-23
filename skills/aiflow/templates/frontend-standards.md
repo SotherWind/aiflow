@@ -2,6 +2,7 @@
 
 > 可选模板，用于项目 `.aiflow/frontend-standards.md` 或团队 `~/.aiflow/frontend-standards.md`。
 > 已有规范 Markdown 可直接使用，不必改成此结构。配置与执行方式见 `references/development-standards.md`。
+> 这是空白骨架。已填好的内容见 aiflow 技能目录的 `examples/frontend-standards.md`，接入步骤见 `configuration.md`。
 
 ## 适用范围
 

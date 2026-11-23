@@ -2,6 +2,7 @@
 
 > 本项目的原型图、设计稿、前端开发共用这一份，阶段 2 由产品经理填写，随 PRD 一起确认。
 > 怎么找规范、怎么交给 AI，见 aiflow `references/design-system.md`。这份文件也可以放到 `~/.aiflow/design-system.md`，当团队默认规范。
+> 这是空白骨架。已填好的内容见 aiflow 技能目录的 `examples/design-system.md`，字段说明与接入步骤见 `configuration.md`。
 
 ## 一、来源
 

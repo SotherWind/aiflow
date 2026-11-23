@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "default": "inherit",
+  "profiles": {
+    "coding": {
+      "model": "<开发模型ID>"
+    },
+    "deep": {
+      "model": "<分析模型ID>",
+      "reasoning_effort": "high"
+    },
+    "independent": {
+      "model": "<独立评审模型ID>",
+      "reasoning_effort": "high"
+    }
+  },
+  "roles": {
+    "aiflow-analyst": "deep",
+    "aiflow-product": "deep",
+    "aiflow-design": "deep",
+    "aiflow-architect": "deep",
+    "aiflow-frontend": "coding",
+    "aiflow-backend": "coding",
+    "aiflow-test": "deep",
+    "aiflow-release": "inherit",
+    "coordinator": "inherit",
+    "design_reviewer": "independent",
+    "final_reviewer": "independent"
+  },
+  "stages": {
+    "6": {
+      "roles": {
+        "aiflow-backend": "deep"
+      }
+    },
+    "9": {
+      "default": "deep"
+    }
+  },
+  "on_unavailable": "error"
+}

@@ -11,6 +11,7 @@
   var VERTICAL = '.inp:not(.ta), .menu-item, .el-input__wrapper, .el-menu-item, .ant-input, .ant-menu-item, input';
   var ICON = '.i, svg, .el-icon, .anticon';
   var SKIP = '.mk, .dim';
+  var textContext;
 
   function visible(el) {
     var r = el.getBoundingClientRect(), s = getComputedStyle(el);
@@ -47,14 +48,45 @@
   function label(el) {
     var frame = el.closest('.screen, .board, .state'), cap = frame && frame.querySelector('.screen-cap b, .frame-title, .cap');
     var name = el.tagName.toLowerCase() + '.' + [].slice.call(el.classList).filter(function (c) { return c !== 'an'; }).join('.');
-    var text = (el.textContent || el.value || '').replace(/\s+/g, ' ').trim().slice(0, 16);
+    var text = (el.localName === 'input' ? el.id || el.name || el.type : el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 16);
     return (cap ? cap.textContent.trim().slice(0, 20) + ' · ' : '') + name + '「' + text + '」';
   }
   function hasPseudo(el) {
     return ['::before', '::after'].some(function (p) { var c = getComputedStyle(el, p).content; return c && c !== 'none' && c !== 'normal'; });
   }
+  function measureText(style, text) {
+    textContext.font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily].join(' ');
+    return textContext.measureText(text);
+  }
+  function checkInput(el, issues) {
+    // 单行编辑器由浏览器绘制，没有可用的 DOM Range；长值可水平滚动，只估算垂直方向。
+    if (!/^(text|search|email|url|tel|password|number)$/.test(el.type)) return;
+    var hint = el.matches(':placeholder-shown');
+    var text = hint ? el.placeholder : (el.type === 'password' ? (el.value ? '•' : '') : el.value);
+    if (!text.trim()) return;
+    var style = getComputedStyle(el), glyphStyle = hint ? getComputedStyle(el, '::placeholder') : style;
+    if (style.writingMode !== 'horizontal-tb' || glyphStyle.visibility !== 'visible' || glyphStyle.opacity === '0') return;
+    var height = el.clientHeight, dy = (parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / 2;
+    var name = label(el) + (hint ? ' 占位文字' : ' 输入文字');
+    if (Math.abs(dy) > TOL) issues.push(name + '：内容' + (dy < 0 ? '偏上 ' : '偏下 ') + Math.abs(dy).toFixed(1) + 'px');
+
+    // 用输入字体定位基线、用实际显示字体量字形。边框内的 padding 仍可显示文字，行高本身不是裁切边界。
+    if (!textContext) textContext = document.createElement('canvas').getContext('2d');
+    if (!textContext) return;
+    var font = measureText(style, hint ? 'Mg' : text);
+    var glyph = hint ? measureText(glyphStyle, text) : font;
+    var baseline = height / 2 + dy + (font.fontBoundingBoxAscent - font.fontBoundingBoxDescent) / 2;
+    // 容许 CSS 像素取整；自然上伸或下伸的字形不用于判定居中。
+    if (baseline - glyph.actualBoundingBoxAscent < -1 || baseline + glyph.actualBoundingBoxDescent > height + 1)
+      issues.push(name + '：文字可能被上下边缘裁切（可视高度 ' + height + 'px）');
+  }
   function check(el, horizontal, issues) {
     if (!visible(el) || el.closest(SKIP)) return;
+    if (el.localName === 'input') {
+      if (!horizontal) checkInput(el, issues);
+      return;
+    }
+    if (el.localName === 'textarea') return;
     var c = content(el); if (!c) return;
     var box = inner(el), name = label(el);
     var dy = (c.top + c.bottom) / 2 - (box.top + box.bottom) / 2;

@@ -150,8 +150,8 @@ def stack_fingerprint(text):
     return hashlib.sha256(proposal.encode("utf-8")).hexdigest()
 
 
-def prd_doc(prototype, design):
-    return """> 依据 facts v1 生成
+def prd_doc(prototype, design, release=True):
+    body = """> 依据 facts v1 生成
 A1 A2 R1
 
 ## 七、交付形态判断
@@ -159,7 +159,21 @@ A1 A2 R1
 |---|---|---|
 | 产品原型 | %s | 示例理由 |
 | 设计稿 | %s | 示例理由 |
-""" % ("需要" if prototype else "不需要", "需要" if design else "不需要") + CONFIRM
+""" % ("需要" if prototype else "不需要", "需要" if design else "不需要")
+    if release is not None:
+        body += "| 发布部署 | %s | 本轮交付目标已确认 |\n" % ("需要" if release else "不需要")
+    return body + CONFIRM
+
+
+DEPLOYMENT_CONDITIONS = """
+## 部署依据与条件
+- 部署目标：在线演示环境
+- 部署方式：沿用项目静态托管流水线
+
+| 条件 | 依据 | 当前值或配置引用 | 核验方式 | 结果 | 证据 |
+|---|---|---|---|---|---|
+| 托管项目发布权限 | docs/deploy.md：流水线需要更新目标项目 | CI 的发布身份配置 | 核验当前身份的项目发布权限 | 通过 | project-access.log |
+"""
 
 
 PROTOTYPE = """> 依据 facts v1 生成
@@ -294,6 +308,37 @@ class CheckTests(unittest.TestCase):
             entries.append("%d %d coordinator %s" % (execution, stage, record["coordinator"]))
         entries.extend("%d %d %s %s" % (execution, stage, role, self.state["agent_sessions"][role]) for role in roles)
 
+    def record_model_policy(self, *roles, on_unavailable="error"):
+        """Use the installed CLI to build the policy; host observations below are explicit test fixtures."""
+        config = {"schema_version": 1, "profiles": {"test": {"model": "fixture-model", "reasoning_effort": "high"}},
+                  "roles": {role: "test" for role in roles}, "on_unavailable": on_unavailable}
+        self.write_af("models.json", json.dumps(config))
+        command = [sys.executable, "-B", str(SKILL_ROOT / "scripts" / "resolve_models.py"), str(self.root),
+                   "--stage", str(self.state["stage"]), "--execution", "1"]
+        for role in roles:
+            command.extend(("--role", role))
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = json.loads(result.stdout)
+        snapshot = data["snapshot"]
+        self.write_af("model-policies/1-1.json", json.dumps(snapshot))
+        self.state["model_policy"] = {"snapshot": "model-policies/1-1.json", "fingerprint": snapshot["fingerprint"]}
+        records = []
+        for role in roles:
+            session = self.state.get("agent_sessions", {}).get(role)
+            if session is None:
+                continue
+            selection = data["role_models"][role]
+            records.append({"schema_version": 1, "execution": 1, "stage": self.state["stage"], "role": role,
+                            "session_id": session, "policy": "model-policies/1-1.json",
+                            "policy_fingerprint": snapshot["fingerprint"], "requested_model": selection["model"],
+                            "requested_reasoning_effort": selection["reasoning_effort"], "actual_model": "fixture-model",
+                            "actual_reasoning_effort": "high", "verification": "verified",
+                            "dispatch_evidence": "fixture native call", "model_evidence": "fixture host metadata",
+                            "created_at": "2026-11-16T12:00:00+08:00"})
+        self.write_af("model_runs.jsonl", "".join(json.dumps(record) + "\n" for record in records))
+        return records
+
     def image_fingerprint_command(self):
         return subprocess.run([sys.executable, str(CHECK), str(self.root), "--design-image-fingerprint"],
                               capture_output=True, text=True, encoding="utf-8")
@@ -316,7 +361,7 @@ class CheckTests(unittest.TestCase):
         self.state["design_image_status"] = "confirmed"
         self.state["design_image_fingerprint"] = result.stdout.strip()
 
-    def write_bug(self, records=(), task="T1", owner="BE", standard="A1", status="已关闭", extra=""):
+    def write_bug(self, records=(), task="T1", owner="BE", standard="A1", status="已关闭", extra="", verification_type="验收"):
         rows = "".join("| %d | %s | %s | %s | %s |\n" % row for row in records)
         self.write_art("09-bugs.md", """> 依据 facts v1 生成
 ## 汇总
@@ -325,6 +370,7 @@ class CheckTests(unittest.TestCase):
 | BUG-1 | 示例 | %s | %s | %s |
 
 ### BUG-1 · 示例
+- 验证类型：%s
 - 关联验收：%s
 - 现象：失败
 %s
@@ -334,13 +380,36 @@ class CheckTests(unittest.TestCase):
 %s
 #### 复测结论
 - 结论：通过 → 已关闭
-""" % (task, owner, status, standard, extra, rows))
+""" % (task, owner, status, verification_type, standard, extra, rows))
 
     def fail_initial_test(self):
         self.replace_art("08-test-report.md", "| T1 | BE | 1 | 1 | 0 | 通过 | — |",
                          "| T1 | BE | 1 | 0 | 1 | 不通过 | BUG-1 |")
         self.replace_art("08-test-report.md", "| A1 | E1 | 通过 |", "| A1 | E1 | 失败 |")
         self.state["acceptance_results"]["A1"] = "fail"
+
+    def write_technical_bug(self, records=(), status="已关闭"):
+        details = """- 技术依据：docs/runtime.md 的连接释放约束
+- 发现位置：src/storage.py:42
+- 触发条件：连接创建后查询抛出异常
+- 现象与影响：连接未释放，后续调用耗尽连接池
+- 发现证据：fixture-static-path.log
+#### 技术检查
+| 检查项 | 预期 |
+|---|---|
+| 连接释放 | 成功和失败路径均释放连接 |
+| 异常传播 | 保留原始异常 |
+"""
+        self.write_bug(standard="不适用", status=status, extra=details, verification_type="技术")
+        rows = "".join("| %d | %s | %s | %s |\n" % row for row in records)
+        self.replace_art("09-bugs.md", "| 轮次 | 用例 | 验收标准 | 结果 | 证据 |\n|---|---|---|---|---|",
+                         "| 轮次 | 检查项 | 结果 | 证据 |\n|---|---|---|---|\n" + rows)
+
+    def write_technical_regression(self, records):
+        body = (self.arts / "10-regression.md").read_text(encoding="utf-8")
+        body += "\n## 技术回归\n| 缺陷 | 检查项 | 结果 | 证据 |\n|---|---|---|---|\n"
+        body += "".join("| %s | %s | %s | %s |\n" % row for row in records)
+        self.write_art("10-regression.md", body)
 
     def write_standards_log(self, rows):
         body = (self.arts / "06-dev-log.md").read_text(encoding="utf-8")
@@ -431,7 +500,7 @@ class CheckTests(unittest.TestCase):
 - 条件：无
 - 用户确认：不适用
 """)
-        self.write_art("11-release.md", """> 依据 facts v1 生成
+        self.write_art("11-release.md", "> 依据 facts v1 生成\n" + DEPLOYMENT_CONDITIONS + """
 ## 六、执行结果
 - 状态：观察完成
 - 实际执行时间：2026-10-27T09:00:00+08:00
@@ -448,6 +517,7 @@ class CheckTests(unittest.TestCase):
             "signoffs": {"scope": "confirmed", "requirement": "confirmed", "prd": "confirmed",
                          "prototype": signoff, "design": signoff},
             "prototype_required": design, "design_required": design,
+            "release_required": True,
             "tech_stack_status": "locked", "tech_stack_fingerprint": stack_fingerprint(TECH_STACK),
             "task_status": {"T1": "done", "T2": "done"},
             "walkthrough_result": "pass" if design else "skipped",
@@ -459,6 +529,52 @@ class CheckTests(unittest.TestCase):
         if design:
             self.confirm_design_images()
         dump_state(self.af / "state.yaml", self.state)
+
+    def make_api_delivery(self, batches=("INT1",), stage=6):
+        """模拟实际交付结果；不启动服务，也不把夹具当作真实联调试跑。"""
+        self.make_full(design=False)
+        self.state["api_integration_required"] = True
+        self.state["open_api_issues"] = []
+        self.state["artifacts"].append("06-integration.md")
+        plan = "\n## 接口协作计划\n- 适用结论：需要\n- 依据：本轮页面通过后端读取工单\n"
+        plan += "| 批次 | 后端任务 | 前端任务 | 接口范围 | 文档路径 |\n|---|---|---|---|---|\n"
+        delivery, review, integration = [], [], []
+        self.api_hashes = {}
+        for batch in batches:
+            document = "# %s\nGET /tickets 返回工单列表；无权限返回 403。\n" % batch
+            self.write_af("api/%s.md" % batch, document)
+            digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
+            self.api_hashes[batch] = digest
+            plan += "| %s | T1 | T2 | GET /tickets | .aiflow/api/%s.md |\n" % (batch, batch)
+            delivery.append("| %s | backend-build-%s-1 | %s | http://localhost:8000 | fixture-data.log | api-selftest.log | returned:BE-1; dispatched:FE-review-1 |" % (batch, batch, digest))
+            review.append("| %s | backend-build-%s-1 | %s | 整批 GET /tickets 与页面字段、权限、空态 | 通过 | fe-doc-review.log |" % (batch, batch, digest))
+            integration.append("| %s | backend-build-%s-1 | %s | frontend-build-1 | 真实接口 | 通过 | browser-requests.log：列表、空态、403 |" % (batch, batch, digest))
+        tasks = (self.arts / "05-tasks.md").read_text(encoding="utf-8")
+        self.write_art("05-tasks.md", tasks + plan)
+        self.write_art("06-integration.md", "> 依据 facts v1 生成\n"
+                       + "## 接口交付\n| 批次 | 交付版本 | 文档指纹 | 服务地址 | 测试准备 | 后端自检证据 | 交接依据 |\n|---|---|---|---|---|---|---|\n" + "\n".join(delivery)
+                       + "\n\n## 文档审阅\n| 批次 | 交付版本 | 文档指纹 | 审阅范围 | 结论 | 证据 |\n|---|---|---|---|---|---|\n" + "\n".join(review)
+                       + "\n\n## 真实联调\n| 批次 | 交付版本 | 文档指纹 | 前端版本 | 方式 | 结论 | 证据 |\n|---|---|---|---|---|---|---|\n" + "\n".join(integration)
+                       + "\n\n## 联调问题\n| 编号 | 批次 | 发现版本 | 归属 | 问题与预期 | 状态 | 修复说明 | 复验版本 | 复验角色 | 复验证据 |\n|---|---|---|---|---|---|---|---|---|---|\n\n## 历史记录\n")
+        self.truncate(stage)
+        if stage < 8:
+            self.replace_art("04-mapping.md", "| T1 | E1 |", "| T1 | |")
+            self.replace_art("04-mapping.md", "| T2 | E2 |", "| T2 | |")
+
+    def api_fingerprint_command(self, document):
+        return subprocess.run([sys.executable, str(CHECK), str(self.root), "--api-doc-fingerprint", document],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def make_local_delivery(self, *, mode=1):
+        self.make_full(design=False)
+        self.truncate(10)
+        self.state.update(release_required=False, release_status="skipped", expert="tester", mode=mode)
+        self.write_art("02-prd.md", prd_doc(False, False, release=False))
+        if mode in (2, 3):
+            self.state["agent_sessions"] = {"fe": "agent:fe", "be": "agent:be", "tester": "agent:test"}
+            self.record_dispatch("tester")
+            self.record_execution("direct")
+            self.log_sessions(1, "tester")
 
     def invalidate_after(self, stage):
         self.state["stage"] = stage
@@ -1201,7 +1317,7 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.replace_art(
             "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待复测 |\n\n### BUG-1 · 示例\n- 现象：失败\n",
+            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待复测 |\n\n### BUG-1 · 示例\n- 验证类型：验收\n- 现象：失败\n",
         )
         self.assert_blocked(self.run_check(), "缺陷未清零")
 
@@ -1209,7 +1325,7 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.replace_art(
             "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待复测 |\n\n### BUG-1 · 示例\n- 现象：失败\n",
+            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待复测 |\n\n### BUG-1 · 示例\n- 验证类型：验收\n- 现象：失败\n",
         )
         self.state["open_bugs"] = ["BUG-1"]
         self.assert_blocked(self.run_check(), "缺陷未清零")
@@ -1218,6 +1334,147 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.write_bug([(1, "E1", "A1", "通过", "retest-log-1")])
         self.assert_pass(self.run_check())
+
+    def test_technical_bug_closes_without_invented_acceptance_and_regresses(self):
+        self.make_full(design=False)
+        later = {name: (self.arts / name).read_text(encoding="utf-8")
+                 for name in ("10-regression.md", "11-release.md")}
+        self.truncate(8)
+        initial = (self.arts / "08-test-report.md").read_text(encoding="utf-8")
+        self.write_technical_bug(status="待修复")
+        self.state["open_bugs"] = ["BUG-1"]
+        self.assert_pass(self.run_check())
+
+        self.state["stage"] = 9
+        self.assert_blocked(self.run_check(), "缺陷未清零")
+        self.write_technical_bug([(1, "连接释放", "通过", "retest-release.log"),
+                                  (1, "异常传播", "通过", "retest-error.log")])
+        self.state["open_bugs"] = []
+        self.assert_pass(self.run_check())
+        self.assertEqual(self.state["acceptance_results"], {"A1": "pass", "A2": "pass"})
+
+        self.state["stage"] = 10
+        self.state["artifacts"].append("10-regression.md")
+        self.write_art("10-regression.md", later["10-regression.md"])
+        self.assert_blocked(self.run_check(), "技术回归未覆盖缺陷检查项")
+        self.write_technical_regression([("BUG-1", "连接释放", "通过", "regression-release.log"),
+                                         ("BUG-1", "异常传播", "通过", "regression-error.log")])
+        self.assert_pass(self.run_check())
+        self.state["stage"] = 11
+        self.state["artifacts"].append("11-release.md")
+        self.write_art("11-release.md", later["11-release.md"])
+        self.assert_pass(self.run_check())
+        self.assertEqual((self.arts / "08-test-report.md").read_text(encoding="utf-8"), initial)
+
+    def test_technical_bug_requires_basis_and_defined_checks(self):
+        mutations = [
+            ("docs/runtime.md 的连接释放约束", "", "技术依据"),
+            ("fixture-static-path.log", "", "发现证据"),
+            ("| 连接释放 | 成功和失败路径均释放连接 |\n| 异常传播 | 保留原始异常 |", "", "没有可验证检查项"),
+            ("| 异常传播 | 保留原始异常 |", "| 连接释放 | 保留原始异常 |", "技术检查项重复"),
+        ]
+        for old, new, message in mutations:
+            with self.subTest(message=message):
+                self.make_full(design=False)
+                self.truncate(8)
+                self.write_technical_bug(status="待修复")
+                self.state["open_bugs"] = ["BUG-1"]
+                self.replace_art("09-bugs.md", old, new)
+                self.assert_blocked(self.run_check(), message)
+
+    def test_technical_retest_cannot_close_on_missing_failed_or_unknown_checks(self):
+        scenarios = [
+            ([], "已关闭缺陷缺少复测记录"),
+            ([(1, "连接释放", "通过", "log")], "未通过全部检查项"),
+            ([(1, "连接释放", "通过", "log"), (1, "异常传播", "通过", "")], "复测记录缺少证据"),
+            ([(2, "连接释放", "不通过", "new-log"), (1, "连接释放", "通过", "old-log"),
+              (1, "异常传播", "通过", "log")], "最近一轮复测未通过"),
+            ([(1, "未定义检查", "通过", "log")], "未定义的技术检查项"),
+            ([(1, "连接释放", "不通过", "failure"), (1, "连接释放", "通过", "success")], "同一轮重复复测"),
+        ]
+        for records, message in scenarios:
+            with self.subTest(message=message):
+                self.make_full(design=False)
+                self.truncate(9)
+                self.write_technical_bug(records)
+                self.assert_blocked(self.run_check(), message)
+
+    def test_technical_retest_accepts_newer_success_without_erasing_failure(self):
+        self.make_full(design=False)
+        self.truncate(9)
+        self.write_technical_bug([(2, "连接释放", "通过", "new-log"),
+                                  (1, "连接释放", "不通过", "old-log"),
+                                  (1, "异常传播", "通过", "error-log")])
+        self.assert_pass(self.run_check())
+
+    def test_technical_bug_cannot_replace_failed_acceptance(self):
+        self.make_full(design=False)
+        self.truncate(9)
+        self.fail_initial_test()
+        self.write_technical_bug([(1, "连接释放", "通过", "release-log"),
+                                  (1, "异常传播", "通过", "error-log")])
+        self.state["acceptance_results"]["A1"] = "pass"
+        self.assert_blocked(self.run_check(), "失败验收标准没有在具体缺陷详情中关联：A1")
+        self.replace_art("09-bugs.md", "关联验收：不适用", "关联验收：A1")
+        self.assert_blocked(self.run_check(), "技术缺陷不能承接业务验收失败")
+
+    def test_bug_verification_type_is_explicit_and_unambiguous(self):
+        for declaration in ("验证类型：", "验证类型：建议", "验证类型：技术\n- 验证类型：验收"):
+            with self.subTest(declaration=declaration):
+                self.make_full(design=False)
+                self.truncate(9)
+                self.write_technical_bug()
+                self.replace_art("09-bugs.md", "验证类型：技术", declaration)
+                self.assert_blocked(self.run_check(), "缺陷验证类型须为唯一的验收或技术")
+
+    def test_missing_bug_verification_type_blocks_even_with_valid_retest(self):
+        self.make_full(design=False)
+        self.truncate(9)
+        self.write_bug([(1, "E1", "A1", "通过", "retest-log")])
+        self.replace_art("09-bugs.md", "- 验证类型：验收\n", "")
+        path = self.arts / "09-bugs.md"
+        original = path.read_text(encoding="utf-8")
+        self.assert_blocked(self.run_check(), "旧版验收缺陷")
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.replace_art("09-bugs.md", "- 关联验收：A1", "- 验证类型：验收\n- 关联验收：A1")
+        self.assert_pass(self.run_check())
+        self.replace_art("09-bugs.md", "| E1 | A1 | 通过 |", "| E1 | A1 | 不通过 |")
+        self.assert_blocked(self.run_check(), "最近一轮复测未通过")
+
+    def test_technical_checks_retests_and_regression_cannot_hide_a_second_table(self):
+        for file, anchor, table, label in (
+                ("09-bugs.md", "| 异常传播 | 保留原始异常 |",
+                 "| 检查项 | 预期 |\n|---|---|\n| 并发释放 | 每个连接只释放一次 |", "技术检查"),
+                ("09-bugs.md", "| 1 | 异常传播 | 通过 | retest-error.log |",
+                 "| 轮次 | 检查项 | 结果 | 证据 |\n|---|---|---|---|\n| 2 | 异常传播 | 不通过 | rerun.log |", "复测记录"),
+                ("10-regression.md", "| BUG-1 | 异常传播 | 通过 | regression-error.log |",
+                 "| 缺陷 | 检查项 | 结果 | 证据 |\n|---|---|---|---|\n| BUG-1 | 异常传播 | 不通过 | rerun.log |", "技术回归")):
+            with self.subTest(section=label):
+                self.make_local_delivery()
+                self.write_technical_bug([(1, "连接释放", "通过", "retest-release.log"), (1, "异常传播", "通过", "retest-error.log")])
+                self.write_technical_regression([("BUG-1", "连接释放", "通过", "regression-release.log"),
+                                                 ("BUG-1", "异常传播", "通过", "regression-error.log")])
+                self.replace_art(file, anchor, anchor + "\n\n补充记录：\n\n" + table)
+                self.assert_blocked(self.run_check(), label + "须合并为一张表")
+
+    def test_technical_regression_requires_current_evidence_for_every_bug_check(self):
+        valid = [("BUG-1", "连接释放", "通过", "release-log"),
+                 ("BUG-1", "异常传播", "通过", "error-log")]
+        scenarios = [
+            (valid[:1], "未覆盖缺陷检查项"),
+            ([valid[0], ("BUG-1", "异常传播", "不通过", "failure-log")], "缺少通过结果或证据"),
+            ([valid[0], ("BUG-1", "异常传播", "通过", "")], "缺少通过结果或证据"),
+            (valid + [("BUG-99", "连接释放", "通过", "log")], "未定义的缺陷检查项"),
+            (valid + [("BUG-1", "未定义检查", "通过", "log")], "未定义的缺陷检查项"),
+            ([("BUG-1", "连接释放", "不通过", "failure-log")] + valid, "重复执行记录"),
+        ]
+        for records, message in scenarios:
+            with self.subTest(message=message):
+                self.make_full(design=False)
+                self.write_technical_bug([(1, "连接释放", "通过", "retest-release.log"),
+                                          (1, "异常传播", "通过", "retest-error.log")])
+                self.write_technical_regression(records)
+                self.assert_blocked(self.run_check(), message)
 
     def test_closed_bug_needs_retest_execution_not_just_conclusion(self):
         self.make_full()
@@ -1371,6 +1628,210 @@ class CheckTests(unittest.TestCase):
         self.state["task_status"]["T2"] = "pending"
         self.replace_art("06-dev-log.md", "| T2 | FE | 前端任务 | 完成 |", "| T2 | FE | 前端任务 | 未开始 |")
         self.assert_blocked(self.run_check(), "任务未完成")
+
+    def test_api_plan_does_not_require_implemented_document_at_stage5(self):
+        self.make_api_delivery(stage=5)
+        (self.af / "api/INT1.md").unlink()
+        self.assert_pass(self.run_check())
+
+    def test_api_integration_all_planned_batches_pass_through_later_stages(self):
+        self.make_api_delivery(batches=("INT1", "INT2"), stage=11)
+        self.assert_pass(self.run_check())
+
+    def test_api_plan_requires_explicit_boolean_even_if_flag_is_removed(self):
+        for value in (None, "true", "missing"):
+            with self.subTest(value=value):
+                self.make_api_delivery()
+                if value == "missing":
+                    del self.state["api_integration_required"]
+                else:
+                    self.state["api_integration_required"] = value
+                self.assert_blocked(self.run_check(), "api_integration_required 必须")
+
+    def test_api_plan_cannot_be_skipped_with_false_flag(self):
+        self.make_api_delivery()
+        self.state["api_integration_required"] = False
+        self.assert_blocked(self.run_check(), "接口协作计划与 state.api_integration_required 不一致")
+
+    def test_api_plan_can_explicitly_exclude_unrelated_frontend_and_backend_work(self):
+        self.make_full(design=False)
+        self.state["api_integration_required"] = False
+        self.state["open_api_issues"] = []
+        tasks = (self.arts / "05-tasks.md").read_text(encoding="utf-8")
+        self.write_art("05-tasks.md", tasks + "\n## 接口协作计划\n- 适用结论：不需要\n- 依据：静态展示页面与离线维护任务没有接口对接\n| 批次 | 后端任务 | 前端任务 | 接口范围 | 文档路径 |\n|---|---|---|---|---|\n")
+        self.assert_pass(self.run_check())
+
+    def test_api_plan_rejects_missing_or_wrong_task_ownership(self):
+        for old, new in (("| INT1 | T1 | T2 |", "| INT1 | T2 | T1 |"),
+                         ("| INT1 | T1 | T2 |", "| INT1 | T99 | T2 |")):
+            with self.subTest(new=new):
+                self.make_api_delivery()
+                self.replace_art("05-tasks.md", old, new)
+                self.assert_blocked(self.run_check(), "接口协作计划任务不存在或类型不符")
+
+    def test_api_required_delivery_cannot_be_missing_or_invalidated(self):
+        self.make_api_delivery()
+        self.state["invalidated_artifacts"] = ["06-integration.md"]
+        self.assert_blocked(self.run_check(), "必需产物已失效：06-integration.md")
+        self.state["invalidated_artifacts"] = []
+        (self.arts / "06-integration.md").unlink()
+        self.state["artifacts"].remove("06-integration.md")
+        self.assert_blocked(self.run_check(), "缺少必需产物：06-integration.md")
+
+    def test_api_backend_completion_does_not_replace_frontend_review(self):
+        self.make_api_delivery()
+        self.replace_art("06-integration.md", "| 通过 | fe-doc-review.log |", "| 待修复 | missing-field.log |")
+        self.assert_blocked(self.run_check(), "文档审阅尚未通过：INT1")
+
+    def test_api_passing_mock_cannot_replace_real_integration(self):
+        self.make_api_delivery()
+        self.replace_art("06-integration.md", "| 真实接口 | 通过 |", "| mock | 通过 |")
+        self.assert_blocked(self.run_check(), "真实联调必须使用真实接口：INT1")
+
+    def test_api_every_planned_batch_needs_real_integration(self):
+        self.make_api_delivery(batches=("INT1", "INT2"))
+        row = "| INT2 | backend-build-INT2-1 | %s | frontend-build-1 | 真实接口 | 通过 | browser-requests.log：列表、空态、403 |" % self.api_hashes["INT2"]
+        self.replace_art("06-integration.md", row, "")
+        self.assert_blocked(self.run_check(), "真实联调缺少计划批次：INT2")
+
+    def test_api_delivery_requires_access_details_and_actual_evidence(self):
+        for old, new, expected in (("| fixture-data.log |", "| |", "缺少测试准备"),
+                                   ("| api-selftest.log |", "| |", "缺少后端自检证据"),
+                                   ("| returned:BE-1; dispatched:FE-review-1 |", "| |", "缺少交接依据"),
+                                   ("| 通过 | fe-doc-review.log |", "| 通过 | |", "缺少证据"),
+                                   ("| frontend-build-1 |", "| |", "缺少前端版本")):
+            with self.subTest(expected=expected):
+                self.make_api_delivery()
+                self.replace_art("06-integration.md", old, new)
+                self.assert_blocked(self.run_check(), expected)
+
+    def test_api_document_change_invalidates_previous_green_results(self):
+        self.make_api_delivery()
+        self.assert_pass(self.run_check())
+        self.write_af("api/INT1.md", "GET /tickets 新增必填字段 owner。\n")
+        result = self.run_check()
+        for name in ("接口交付", "文档审阅", "真实联调"):
+            self.assert_blocked(result, name + "文档指纹过期：INT1")
+
+    def test_api_delivery_cannot_claim_no_service_or_evidence(self):
+        self.make_api_delivery()
+        for old, placeholder in (("http://localhost:8000", "无"), ("api-selftest.log", "不适用"),
+                                 ("fe-doc-review.log", "无"), ("browser-requests.log：列表、空态、403", "不适用")):
+            self.replace_art("06-integration.md", old, placeholder)
+        result = self.run_check()
+        for missing in ("接口交付缺少服务地址", "接口交付缺少后端自检证据", "文档审阅缺少证据", "真实联调缺少证据"):
+            self.assert_blocked(result, missing)
+
+    def test_api_backend_behavior_fix_requires_new_frontend_results_even_with_same_doc(self):
+        self.make_api_delivery()
+        digest = self.api_hashes["INT1"]
+        self.replace_art("06-integration.md",
+                         "| INT1 | backend-build-INT1-1 | %s | http://" % digest,
+                         "| INT1 | backend-build-INT1-2 | %s | http://" % digest)
+        result = self.run_check()
+        self.assert_blocked(result, "文档审阅交付版本与当前后端不一致：INT1")
+        self.assert_blocked(result, "真实联调交付版本与当前后端不一致：INT1")
+        self.replace_art("06-integration.md", "backend-build-INT1-1", "backend-build-INT1-2")
+        self.assert_pass(self.run_check())
+
+    def test_api_issue_repair_requires_frontend_reverification(self):
+        self.make_api_delivery()
+        row = "| API-1 | INT1 | backend-build-INT1-1 | BE | 403 缺少约定错误码 | 待修复 | | | | |"
+        self.replace_art("06-integration.md", "\n\n## 历史记录", "\n" + row + "\n\n## 历史记录")
+        self.state["open_api_issues"] = ["API-1"]
+        self.assert_blocked(self.run_check(), "联调问题尚未关闭：API-1=待修复")
+        self.replace_art("06-integration.md", row, row.replace("待修复 | | | | |", "待复验 | 补错误码 | | | |"))
+        self.assert_blocked(self.run_check(), "联调问题尚未关闭：API-1=待复验")
+        self.replace_art("06-integration.md", "| 待复验 | 补错误码 | | | |",
+                         "| 已关闭 | 补错误码 | backend-build-INT1-1 | FE | fe-recheck-403.log |")
+        self.state["open_api_issues"] = []
+        self.assert_pass(self.run_check())
+        self.replace_art("06-integration.md", "| FE | fe-recheck-403.log |", "| BE | fe-recheck-403.log |")
+        self.assert_blocked(self.run_check(), "联调问题必须由 FE 复验关闭：API-1")
+
+    def test_api_closed_issue_without_reverification_evidence_is_blocked(self):
+        self.make_api_delivery()
+        row = "| API-1 | INT1 | backend-build-INT1-1 | BE | 缺少错误码 | 已关闭 | 已补齐 | backend-build-INT1-1 | FE | |"
+        self.replace_art("06-integration.md", "\n\n## 历史记录", "\n" + row + "\n\n## 历史记录")
+        self.assert_blocked(self.run_check(), "已关闭联调问题缺少复验证据：API-1")
+
+    def test_api_current_results_cannot_hide_duplicate_or_unknown_batches(self):
+        self.make_api_delivery()
+        body = (self.arts / "06-integration.md").read_text(encoding="utf-8")
+        row = next(line for line in body.splitlines() if "frontend-build-1" in line)
+        self.replace_art("06-integration.md", row, row + "\n" + row)
+        self.assert_blocked(self.run_check(), "真实联调重复编号：INT1")
+        self.replace_art("06-integration.md", row + "\n" + row, row.replace("| INT1 |", "| INT99 |"))
+        self.assert_blocked(self.run_check(), "真实联调含未知批次：INT99")
+
+    def test_api_doc_fingerprint_works_without_state_and_normalizes_line_endings(self):
+        document = "# 中文接口\nGET /tickets\n"
+        self.write_af("api/INT1.md", document)
+        result = self.api_fingerprint_command(".aiflow/api/INT1.md")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), hashlib.sha256(document.encode("utf-8")).hexdigest())
+        (self.af / "api/INT1.md").write_bytes(document.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual(self.api_fingerprint_command(".aiflow/api/INT1.md").stdout, result.stdout)
+
+    def test_api_open_issue_cannot_disappear_from_current_records(self):
+        self.make_api_delivery()
+        self.state["open_api_issues"] = ["API-1"]
+        self.assert_blocked(self.run_check(), "state.open_api_issues 与联调问题不一致")
+
+    def test_open_api_issues_in_legacy_state_block_delivery_until_resolved(self):
+        self.make_local_delivery()
+        self.state["open_api_issues"] = ["API-1"]
+        result = self.run_check()
+        self.assert_blocked(result, "API-1")
+        self.assertNotIn("本轮交付完成", result.stdout)
+        self.state["open_api_issues"] = []
+        self.assert_pass(self.run_check())
+
+    def test_api_rollback_preserves_open_issues_until_migrated(self):
+        self.make_api_delivery()
+        row = "| API-1 | INT1 | backend-build-INT1-1 | ARCH | 字段约定缺失 | 待修复 | | | | |"
+        self.replace_art("06-integration.md", "\n\n## 历史记录", "\n" + row + "\n\n## 历史记录")
+        self.state.update(stage=5, invalidated_artifacts=["06-dev-log.md", "06-integration.md"],
+                          task_status={}, open_api_issues=["API-1"])
+        self.assert_pass(self.run_check())
+        self.state["open_api_issues"] = []
+        self.assert_blocked(self.run_check(), "未关闭问题未保留在 state.open_api_issues：API-1")
+        self.state.update(stage=6, open_api_issues=["API-1"])
+        self.assert_blocked(self.run_check(), "失效联调仍有未迁移的未关闭问题：API-1")
+
+    def test_api_second_current_table_cannot_hide_pending_results(self):
+        self.make_api_delivery()
+        extra = "\n\n| 批次 | 交付版本 | 结论 |\n|---|---|---|\n| INT1 | old-build | 不通过 |"
+        self.replace_art("06-integration.md", "\n\n## 联调问题", extra + "\n\n## 联调问题")
+        self.assert_blocked(self.run_check(), "真实联调必须有且只有一个当前结果表")
+
+    def test_api_empty_plan_heading_cannot_be_mistaken_for_legacy(self):
+        self.make_full(design=False)
+        tasks = (self.arts / "05-tasks.md").read_text(encoding="utf-8")
+        self.write_art("05-tasks.md", tasks + "\n## 接口协作计划\n")
+        self.assert_blocked(self.run_check(), "api_integration_required 必须")
+
+    def test_api_batch_backend_repair_requires_current_frontend_dispatch(self):
+        self.make_api_delivery(stage=9)
+        self.write_bug([(1, "E1", "A1", "通过", "tester-retest.log")])
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"fe": "agent:fe-stage6", "be": "agent:be-stage9", "tester": "agent:tester-stage9"}
+        self.record_dispatch("be", "tester")
+        self.record_execution("direct")
+        self.assert_blocked(self.run_check(), "stage_dispatch.fe 缺少本阶段实际派发与完成回报证据")
+        self.state["agent_sessions"]["fe"] = "agent:fe-stage9"
+        self.record_dispatch("be", "tester", "fe")
+        self.assert_pass(self.run_check())
+
+    def test_api_doc_fingerprint_rejects_missing_empty_unreadable_and_outside_files(self):
+        for document in (".aiflow/api/missing.md", "../outside.md", ".aiflow/api/empty.md", ".aiflow/api/binary.md"):
+            with self.subTest(document=document):
+                self.write_af("api/empty.md", " ")
+                path = self.af / "api/binary.md"
+                path.write_bytes(b"\xff\xfe")
+                result = self.api_fingerprint_command(document)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_uncovered_acceptance_is_blocked(self):
         self.make_full()
@@ -1686,7 +2147,7 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.replace_art(
             "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 已关闭 |\n\n### BUG-1 · 示例\n- 现象：失败\n",
+            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 已关闭 |\n\n### BUG-1 · 示例\n- 验证类型：验收\n- 现象：失败\n",
         )
         self.assert_blocked(self.run_check(), "缺少通过复测结论")
 
@@ -1707,6 +2168,197 @@ class CheckTests(unittest.TestCase):
         self.replace_art("11-release.md", "证据：release-log-123", "证据：")
         self.assert_blocked(self.run_check(), "缺少证据")
 
+    def test_local_demo_completes_after_regression_without_release_artifact(self):
+        self.make_local_delivery()
+        result = self.run_check()
+        self.assert_pass(result)
+        self.assertIn("本轮交付完成", result.stdout)
+        self.assertFalse((self.arts / "11-release.md").exists())
+
+    def test_local_delivery_needs_no_operator_session_or_dispatch(self):
+        self.make_local_delivery(mode=2)
+        self.assertNotIn("operator", self.state["agent_sessions"])
+        self.assertNotIn("operator", self.state["stage_dispatch"])
+        self.assert_pass(self.run_check())
+
+    def test_local_delivery_preserves_independent_final_review_requirement(self):
+        self.make_local_delivery(mode=3)
+        self.assert_blocked(self.run_check(), "独立终验尚未通过")
+        self.state["agent_sessions"]["final_reviewer"] = "human:reviewer"
+        self.state.update(final_review_result="pass", final_review_evidence="local-final-review.log")
+        self.assert_pass(self.run_check())
+
+    def test_model_reviewer_with_outer_whitespace_still_requires_real_session(self):
+        self.make_local_delivery(mode=3)
+        self.record_model_policy("tester")
+        self.state.update(final_review_result="pass", final_review_evidence="review.log")
+        self.state["agent_sessions"]["final_reviewer"] = " model:review "
+        result = self.run_check()
+        self.assert_blocked(result, "缺少 final_review_session")
+        self.assertNotIn("本轮交付完成", result.stdout)
+        self.state["agent_sessions"]["final_reviewer"] = " human:reviewer "
+        self.assert_pass(self.run_check())
+
+    def test_local_delivery_still_requires_full_regression_coverage(self):
+        self.make_local_delivery()
+        self.replace_art("10-regression.md", "| E2 | A2 | 全量验收 | 通过 | |", "")
+        result = self.run_check()
+        self.assert_blocked(result, "未以有效通过用例覆盖验收标准：A2")
+        self.assertNotIn("本轮交付完成", result.stdout)
+
+    def test_release_decision_must_be_boolean_after_prd(self):
+        for value in (None, "false", 0, 1):
+            with self.subTest(value=value):
+                self.make_full(design=False)
+                self.state["release_required"] = value
+                self.assert_blocked(self.run_check(), "state.release_required 必须按 PRD")
+
+    def test_release_decision_requires_confirmed_prd_row_and_reason(self):
+        self.make_full(design=False)
+        self.write_art("02-prd.md", prd_doc(False, False, release=None))
+        self.assert_blocked(self.run_check(), "交付形态判断缺少「发布部署」")
+        self.write_art("02-prd.md", prd_doc(False, False).replace("| 发布部署 | 需要 | 本轮交付目标已确认 |",
+                                                                "| 发布部署 | 需要 | |"))
+        self.assert_blocked(self.run_check(), "「发布部署」缺少理由")
+
+    def test_release_decision_cannot_be_changed_only_in_state(self):
+        self.make_local_delivery()
+        self.write_art("02-prd.md", prd_doc(False, False, release=True))
+        self.assert_blocked(self.run_check(), "交付形态与 state 不一致：PRD「发布部署」")
+
+    def test_local_delivery_requires_skipped_release_status(self):
+        self.make_local_delivery()
+        for status in ("planned", "deployed", "verified", "rolled_back"):
+            with self.subTest(status=status):
+                self.state["release_status"] = status
+                self.assert_blocked(self.run_check(), "不需要发布部署时 state.release_status 必须为 skipped")
+
+    def test_deployment_required_cannot_use_skipped_status(self):
+        self.make_full(design=False)
+        self.truncate(10)
+        self.state["release_status"] = "skipped"
+        self.assert_blocked(self.run_check(), "需要发布部署时 release_status 不能为 skipped")
+
+    def test_local_delivery_cannot_retain_current_release_artifact(self):
+        self.make_full(design=False)
+        release = (self.arts / "11-release.md").read_text(encoding="utf-8")
+        self.make_local_delivery()
+        self.write_art("11-release.md", release)
+        self.state["artifacts"].append("11-release.md")
+        self.assert_blocked(self.run_check(), "PRD 判断不需要，但存在产物：11-release.md")
+
+    def test_local_delivery_must_resolve_invalidated_release_before_finishing(self):
+        self.make_local_delivery()
+        self.state["invalidated_artifacts"] = ["11-release.md"]
+        self.assert_blocked(self.run_check(), "失效产物尚未处置：11-release.md")
+
+    def test_local_delivery_finishes_at_stage_ten(self):
+        self.make_local_delivery(mode=2)
+        self.state["stage"] = 11
+        result = self.run_check()
+        self.assert_blocked(result, "在阶段 10 收尾")
+        self.assertNotIn("缺少 agent_sessions.operator", result.stdout)
+
+    def test_online_demo_still_requires_deployment_role(self):
+        self.make_full(design=False)
+        self.state.update(project="Demo", mode=2)
+        self.state["agent_sessions"] = {"fe": "agent:fe", "be": "agent:be", "tester": "agent:test"}
+        self.record_dispatch("operator")
+        self.assert_blocked(self.run_check(), "缺少 agent_sessions.operator")
+
+    def test_required_deployment_still_requires_release_artifact(self):
+        self.make_full(design=False)
+        self.truncate(10)
+        self.state["stage"] = 11
+        self.assert_blocked(self.run_check(), "缺少必需产物：11-release.md")
+
+    def test_legacy_release_without_new_decision_and_conditions_still_passes(self):
+        self.make_full(design=False)
+        del self.state["release_required"]
+        self.write_art("02-prd.md", prd_doc(False, False, release=None))
+        self.replace_art("11-release.md", DEPLOYMENT_CONDITIONS, "")
+        self.assert_pass(self.run_check())
+        self.truncate(10)
+        self.state["stage"] = 11
+        self.assert_blocked(self.run_check(), "缺少必需产物：11-release.md")
+
+    def test_deployment_requirements_accept_project_specific_dependencies(self):
+        self.make_full(design=False)
+        self.replace_art("11-release.md", DEPLOYMENT_CONDITIONS, """
+## 部署依据与条件
+- 部署目标：内部容器演示环境
+- 部署方式：已有容器编排
+| 条件 | 依据 | 当前值或配置引用 | 核验方式 | 结果 | 证据 |
+|---|---|---|---|---|---|
+| 镜像拉取权限 | compose.yaml：服务使用私有镜像 | registry-pull 身份 | 拉取目标镜像 | 通过 | pull.log |
+| 数据库连通性 | 服务配置：启动依赖数据库 | secrets/DEMO_DATABASE_URL | 从运行环境连接并读写演练库 | 通过 | db-check.log |
+| 数据迁移权限 | 项目迁移脚本：本次新增列 | migration-runner 身份 | 在演练库执行迁移与恢复 | 通过 | migration.log |
+""")
+        self.assert_pass(self.run_check())
+
+    def test_new_deployment_requires_condition_record(self):
+        self.make_full(design=False)
+        self.replace_art("11-release.md", DEPLOYMENT_CONDITIONS, "")
+        self.assert_blocked(self.run_check(), "缺少部署依据与条件")
+
+    def test_deployment_conditions_must_be_verified_before_completion(self):
+        for status in ("待补充", "待核验", "不满足"):
+            with self.subTest(status=status):
+                self.make_full(design=False)
+                self.replace_art("11-release.md", "| 通过 | project-access.log |",
+                                 "| %s | project-access.log |" % status)
+                self.assert_blocked(self.run_check(), "部署条件尚未核验通过")
+
+    def test_deployment_conditions_require_basis_config_method_and_evidence(self):
+        for value, column in (("docs/deploy.md：流水线需要更新目标项目", "依据"),
+                              ("CI 的发布身份配置", "当前值或配置引用"),
+                              ("核验当前身份的项目发布权限", "核验方式"),
+                              ("project-access.log", "证据")):
+            with self.subTest(column=column):
+                self.make_full(design=False)
+                self.replace_art("11-release.md", "| %s |" % value, "| |")
+                self.assert_blocked(self.run_check(), "部署条件第 1 行缺少%s" % column)
+
+    def test_deployment_conditions_cannot_be_an_empty_table(self):
+        self.make_full(design=False)
+        self.replace_art("11-release.md", "| 托管项目发布权限 | docs/deploy.md：流水线需要更新目标项目 | CI 的发布身份配置 | 核验当前身份的项目发布权限 | 通过 | project-access.log |", "")
+        self.assert_blocked(self.run_check(), "部署条件表没有本次项目的必要条件")
+
+    def test_deployment_cannot_hide_unverified_conditions_in_another_section_or_table(self):
+        pending = DEPLOYMENT_CONDITIONS.replace("| 通过 |", "| 待核验 |")
+        for extra in (pending, pending[pending.index("| 条件 |"):]):
+            with self.subTest(extra=extra):
+                self.make_full(design=False)
+                self.replace_art("11-release.md", DEPLOYMENT_CONDITIONS, DEPLOYMENT_CONDITIONS + "\n" + extra)
+                self.assert_blocked(self.run_check(), "部署依据与条件")
+
+    def test_deployment_pass_label_requires_substantive_basis_and_evidence(self):
+        for value in ("无", "不适用", "<待补>"):
+            with self.subTest(value=value):
+                self.make_full(design=False)
+                self.replace_art("11-release.md", "| project-access.log |", "| %s |" % value)
+                self.assert_blocked(self.run_check(), "部署条件第 1 行缺少证据")
+
+    def test_deployment_target_and_method_must_be_unambiguous(self):
+        for name, value in (("部署目标", "在线演示环境"), ("部署方式", "沿用项目静态托管流水线")):
+            with self.subTest(name=name):
+                self.make_full(design=False)
+                self.replace_art("11-release.md", "- %s：%s" % (name, value), "- %s：" % name)
+                self.assert_blocked(self.run_check(), "缺少唯一有效的%s" % name)
+                self.replace_art("11-release.md", "- %s：\n" % name,
+                                 "- %s：%s\n- %s：另一个环境或方式\n" % (name, value, name))
+                self.assert_blocked(self.run_check(), "缺少唯一有效的%s" % name)
+
+    def test_adding_deployment_requires_fresh_release_after_local_regression(self):
+        self.make_local_delivery()
+        self.state.update(release_required=True, release_status="planned")
+        self.write_art("02-prd.md", prd_doc(False, False, release=True))
+        result = self.run_check()
+        self.assert_pass(result)
+        self.assertNotIn("本轮交付完成", result.stdout)
+        self.state["stage"] = 11
+        self.assert_blocked(self.run_check(), "缺少必需产物：11-release.md")
+
     def test_documented_failed_acceptance_cannot_be_hidden_by_state(self):
         self.make_full()
         self.replace_art("08-test-report.md", "| A2 | E2 | 通过 |", "| A2 | E2 | 失败 |")
@@ -1716,7 +2368,7 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.replace_art(
             "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待修复 |\n| BUG-1 | 示例 | T1 | BE | 已关闭 |\n\n### BUG-1 · 示例\n**复测结论**\n- 结论：**通过 → 已关闭**\n",
+            "|---|---|---|---|---|\n| BUG-1 | 示例 | T1 | BE | 待修复 |\n| BUG-1 | 示例 | T1 | BE | 已关闭 |\n\n### BUG-1 · 示例\n- 验证类型：验收\n**复测结论**\n- 结论：**通过 → 已关闭**\n",
         )
         self.assert_blocked(self.run_check(), "重复缺陷编号")
 
@@ -2254,6 +2906,64 @@ class CheckTests(unittest.TestCase):
         self.truncate(4)
         self.assert_blocked(self.run_check(), "不得预填")
 
+    def test_mapping_reads_ids_only_from_their_protocol_cells(self):
+        self.make_full()
+        self.truncate(4)
+        self.write_art("04-mapping.md", """> 依据 facts v1 生成
+## 一、映射表
+| 谁验证（阶段 8 回填） | 由哪条约束保证 | 验收标准 | 谁实现（阶段 5 回填） | 落在哪 |
+|---|---|---|---|---|
+| 阶段8回填 | E1 错误码表 | A1 | 阶段5回填 | T7 时序图 |
+| — | 数据约束 | A2 | — | 服务层 |
+## 二、无对应项（必须为空）
+| 为什么落不下去 | 验收标准 | 退回动作 |
+|---|---|---|
+
+A1–A2 均已有对应。
+""")
+        self.assert_pass(self.run_check())
+        self.replace_art("04-mapping.md", "阶段8回填 | E1", "E4 | E1")
+        self.replace_art("04-mapping.md", "阶段5回填 | T7", "T3 | T7")
+        result = self.run_check()
+        self.assert_blocked(result, "阶段 4 不得预填尚未产生的 T 编号：A1")
+        self.assertIn("阶段 8 前不得预填尚未产生的 E 编号：A1", result.stdout)
+
+    def test_mapping_unresolved_reports_the_entry_not_ids_in_its_reason(self):
+        self.make_full()
+        table = "| 验收标准 | 为什么落不下去 | 退回动作 |\n|---|---|---|\n"
+        self.replace_art("04-mapping.md", table, table + "| A1 | 与已有 A2 对比仍无落点 | 退回 |\n")
+        result = self.run_check()
+        self.assert_blocked(result, "仍有「无对应」：A1")
+        self.assertNotIn("仍有「无对应」：A2", result.stdout)
+
+    def test_mapping_prose_cannot_fill_missing_task_or_test_at_later_stages(self):
+        self.make_full(design=False)
+        self.truncate(8)
+        self.replace_art("04-mapping.md", "| A1 | 约束一 | 数据层 | T1 | E1 |",
+                         r"| A1 | 契约 T1 \| E1 | 数据层 | | |")
+        result = self.run_check()
+        self.assert_blocked(result, "阶段 5 未在映射表回填任务：A1")
+        self.assertIn("任务详情未在映射表对回原任务：A1 → T1", result.stdout)
+        self.assertIn("阶段 8 未在映射表回填用例：A1", result.stdout)
+
+    def test_mapping_requires_an_unambiguous_protocol_table(self):
+        self.make_full()
+        self.replace_art("04-mapping.md", "| 谁实现 | 谁验证 |", "| 谁验证 | 谁验证 |")
+        self.assert_blocked(self.run_check(), "期望表头：验收标准 | 落在哪 | 由哪条约束保证 | 谁实现 | 谁验证")
+        self.make_full()
+        self.replace_art("04-mapping.md", "## 二、无对应项", "## 二、说明")
+        self.assert_blocked(self.run_check(), "无对应项 需要一张")
+
+    def test_mapping_ignores_example_tables_and_unrelated_notes(self):
+        self.make_full()
+        self.replace_art("04-mapping.md", "## 一、映射表", "~~~markdown\n## 二、无对应项\n"
+                         "| 验收标准 | 原因 |\n|---|---|\n| A2 | 仅说明格式 |\n~~~\n## 一、映射表")
+        self.replace_art("04-mapping.md", "## 二、无对应项\n| 验收标准 | 为什么落不下去",
+                         "## 二、无对应项\n| 验收标准 | 已有对应位置 |\n|---|---|\n| A1 | 已映射 |\n\n| 验收标准 | 为什么落不下去")
+        self.assert_pass(self.run_check())
+        self.replace_art("04-mapping.md", "| 验收标准 | 为什么落不下去 | 退回动作 |", "| 验收标准 | 原因 | 退回动作 |")
+        self.assert_pass(self.run_check())
+
     def test_unconfirmed_rule_is_blocked(self):
         self.make_full()
         self.replace_art("01-research.md", "A1 A2 R1", "A1 A2 R1")
@@ -2300,11 +3010,61 @@ class CheckTests(unittest.TestCase):
         self.replace_art("08-test-report.md", "| A2 | E2 | 通过 |", "| A2 | E2 | 失败 |")
         self.replace_art(
             "09-bugs.md", "|---|---|---|---|---|\n",
-            "|---|---|---|---|---|\n| BUG-1 | 示例 | T2 | FE | 待修复 |\n\n### BUG-1 · 示例\n- 关联验收：A2\n- 现象：失败\n",
+            "|---|---|---|---|---|\n| BUG-1 | 示例 | T2 | FE | 待修复 |\n\n### BUG-1 · 示例\n- 验证类型：验收\n- 关联验收：A2\n- 现象：失败\n",
         )
         self.state["open_bugs"] = ["BUG-1"]
         self.state["acceptance_results"]["A2"] = "fail"
         self.assert_pass(self.run_check())
+
+    def test_model_configuration_requires_current_execution_evidence(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "fixture-pm-session"}
+        self.record_dispatch("pm")
+        self.record_execution("direct")
+        self.log_sessions(1, "pm")
+        self.record_model_policy("pm")
+        self.assert_pass(self.run_check())
+        self.write_af("model_runs.jsonl", "")
+        self.assert_blocked(self.run_check(), "缺少本次 pm")
+        self.state["model_policy"] = {}
+        self.assert_blocked(self.run_check(), "缺少本次 model_policy")
+
+    def test_model_request_without_verified_runtime_settings_cannot_pass(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.state["mode"] = 2
+        self.state["agent_sessions"] = {"pm": "fixture-pm-session"}
+        self.record_dispatch("pm")
+        self.record_execution("direct")
+        self.log_sessions(1, "pm")
+        records = self.record_model_policy("pm")
+        records[0]["actual_model"] = "fixture-host-override"
+        self.write_af("model_runs.jsonl", json.dumps(records[0]) + "\n")
+        self.assert_blocked(self.run_check(), "实际模型与请求模型不一致")
+        records[0].update(verification="unverified", actual_model=None, actual_reasoning_effort=None, model_evidence="")
+        self.write_af("model_runs.jsonl", json.dumps(records[0]) + "\n")
+        self.assert_blocked(self.run_check(), "尚未核实实际值")
+
+    def test_mode1_model_fallback_is_explicit_and_does_not_claim_agents(self):
+        self.make_full(design=False)
+        self.truncate(2)
+        self.record_model_policy("pm")
+        self.assert_blocked(self.run_check(), "模式 1 无法按角色切换模型")
+        self.record_model_policy("pm", on_unavailable="inherit")
+        self.state["model_policy"]["fallback_reason"] = "fixture host has no independent agent model selection"
+        self.assert_pass(self.run_check())
+        self.assertEqual((self.af / "model_runs.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_invalidated_acceptance_must_clear_model_final_review_session(self):
+        self.make_full(design=False)
+        self.truncate(5)
+        self.state["invalidated_artifacts"] = ["08-test-report.md"]
+        self.state["final_review_result"] = "not_run"
+        self.state["final_review_evidence"] = ""
+        self.state["final_review_session"] = "old-final-session"
+        self.assert_blocked(self.run_check(), "失效验收仍保留独立终验")
 
     def test_mode3_requires_final_review(self):
         self.make_full()
@@ -2367,6 +3127,30 @@ class CheckTests(unittest.TestCase):
         self.write_af("questions.md", questions + RESEARCH_NOTES)
         self.assert_pass(self.run_check())
 
+    def test_research_read_status_is_consistent_with_its_evidence(self):
+        self.make_full(design=False)
+        notes = template("questions.md").split("## 调研记录", 1)[1]
+        record = "| 1 | 消息保留 | 手册§3 | v2 / 2026-11-02 | %s | %s | %s | %s | 影响选型 |\n"
+        for status, excerpt, claim, limit, error in (
+            ("已读正文", "最多保留十条", "§3：十条上限", "仅文档", None),
+            ("未取得正文", "", "", "只返回登录页", None),
+            ("未取得正文", "", "十条上限", "只返回登录页", "不能填写正文摘录或已核实做法"),
+            ("已读正文", "", "十条上限", "", "缺少正文摘录"),
+        ):
+            with self.subTest(status=status, error=error):
+                self.write_af("questions.md", QUESTIONS + "\n## 调研记录" + notes.rstrip() + "\n" +
+                              record % (status, excerpt, claim, limit))
+                result = self.run_check()
+                self.assert_blocked(result, error) if error else self.assert_pass(result)
+
+    def test_gate_summary_identifies_project_and_root(self):
+        self.make_full(design=False)
+        self.state["project"] = "验收工作台"
+        result = self.run_check()
+        self.assert_pass(result)
+        self.assertIn("项目：验收工作台", result.stdout)
+        self.assertIn("项目目录：%s" % self.root.resolve(), result.stdout)
+
     def test_researched_recommendation_still_needs_user_answer(self):
         self.make_full(design=False)
         questions = QUESTIONS + "| Q2 | 2 | 删除后如何恢复 | A1 | Q1 | 推荐 B | | 按推荐 | 依据见调研记录 |\n"
@@ -2387,6 +3171,13 @@ class CheckTests(unittest.TestCase):
         self.make_full()
         self.write_art("02-prd.md", prd_doc(True, False))
         self.assert_blocked(self.run_check(), "交付形态与 state 不一致")
+
+    def test_delivery_form_reports_the_mismatched_schema_once(self):
+        self.make_full()
+        self.replace_art("02-prd.md", "| 交付物 | 是否需要 | 理由 |", "| 交付物 | 判断 | 理由与边界 |")
+        result = self.run_check()
+        self.assert_blocked(result, "期望表头：交付物 | 是否需要 | 理由；实际表头：交付物 | 判断 | 理由与边界")
+        self.assertNotIn("必须写「需要」或「不需要」：空", result.stdout)
 
     def test_design_must_cover_every_prototype_page(self):
         self.make_full()

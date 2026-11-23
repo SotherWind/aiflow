@@ -25,6 +25,8 @@ invalidated_artifacts: []
 
 open_bugs: []
 open_ux_issues: []
+# 接口协作的 API-n 未关闭问题；主控按真实返回同步，回退时保留并迁移。
+open_api_issues: []
 
 # 已落档 questions.md 中「待问 / 待答复」的编号；不要求为每轮对话同步写文件。
 pending_decisions: []
@@ -41,6 +43,10 @@ signoffs:
 # 阶段 2 由 PRD 的「交付形态判断」决定，用户确认 PRD 后填 true / false。
 prototype_required: null
 design_required: null
+# 本轮是否包含实际部署；按交付目标判断，Demo 也可能需要部署。
+# 阶段 2 随 PRD 确认；false 时 release_status 为 skipped，阶段 10 通过后交付。
+# 旧项目缺少该字段时沿用需要部署，重新确认交付形态时再补录。
+release_required: null
 
 # 阶段 3：先生成图片并获用户确认，再制作 HTML；不需要设计时设 skipped。
 # 图片版本和真实反馈在 design-images.md，确认后用 --design-image-fingerprint 计算指纹。
@@ -59,6 +65,11 @@ development_standards:
 tech_stack_status: pending
 tech_stack_fingerprint: ""
 
+# 阶段 5 由架构师在 05-tasks.md「接口协作计划」判断、主控同步 true / false。
+# true 时阶段 6 必需 06-integration.md，所有批次文档审阅及真实联调通过且问题关闭。
+# 旧项目缺字段兼容旧记录；本轮进入或重做阶段 5/6 时补实际判断。
+api_integration_required: null
+
 # 阶段 6 起登记：T1: done / partial / pending。进入阶段 7 前必须全部 done。
 task_status: {}
 
@@ -75,7 +86,8 @@ regression_result: not_run
 regression_conditions: []
 regression_user_confirmed: false
 
-# 阶段 11 起登记：planned / deployed / verified / rolled_back。只有 verified 算上线完成。
+# 需要部署：planned / deployed / verified / rolled_back，只有 verified 算上线完成。
+# 不需要部署：skipped，不生成 11-release.md、不派 operator，阶段 10 收尾。
 release_status: planned
 
 # 模式 2/3 按实际派工记录 analyst、pm、designer、architect、fe、be、tester、operator 的真实会话 ID。
@@ -97,6 +109,11 @@ stage_execution:
 # 只追加的派工会话台账，用来查出换阶段沿用旧会话。每条写成 "执行序号 阶段 角色 会话ID"，角色为 coordinator 或上面的角色键。
 # 每次进入、回退或重做阶段取已有最大序号 + 1，本阶段派出的协调器和角色拿到 ID 后各记一条；旧条目不删不改，模式 1 保持为空。
 session_log: []
+# 可选模型策略；启用后由主控保存本次快照相对路径和指纹，详见 references/models.md。
+# 不配置模型时保持为空；实际请求与运行元数据另追加到 model_runs.jsonl。
+model_policy: {}
 final_review_result: not_run
 final_review_evidence: ""
+# 启用模型策略且模式 3 采用不同模型终验时，记录真实会话 ID；模型名称仍在 agent_sessions.final_reviewer。
+final_review_session: ""
 updated_at: "YYYY-MM-DDThh:mm:ss+08:00"

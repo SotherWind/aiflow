@@ -9,6 +9,8 @@
 1. 用户明确提出（「加一个状态」「这个字段不要了」）
 2. 阶段中发现事实源本身写错了（调研漏问、规则理解偏）
 
+仅改变本轮是否包含实际部署时，先澄清交付目标并归档受影响资料，回阶段 2 更新 PRD「发布部署」及理由、重新确认，再同步 `release_required`。涉及范围、业务规则或验收语义的同时按本协议重验；纯交付方式变化不提升 facts 版本。改为无需部署时，归档旧 `11-release.md` 和发布记录，移除当前产物登记及失效待办，设 `release_status: skipped`；确认回归与其他条件仍有效后在阶段 10 收尾。新增部署时设 `planned`，复核运行依赖与构建产物，再进入阶段 11 重新核验条件；历史上线结果不直接复用。仅变更部署目标或条件时归档旧记录、复核受影响范围和授权，重新核验发布条件；实际部署是否撤销按另行授权处理。
+
 **不许在下游产物里直接改。** 改 PRD 不改 facts、改代码不改契约，都是断链的起点——下一个人重跑时会把它改回去，而且没人知道当初为什么改。
 
 ## 四步
@@ -42,6 +44,7 @@ invalidated_artifacts:
   - 04-mapping.md
   - 05-tasks.md
   - 06-dev-log.md
+  - 06-integration.md
   - 07-walkthrough.md
   - 08-test-report.md
   - 09-bugs.md
@@ -58,13 +61,16 @@ invalidated_artifacts:
 | 范围、需求、PRD、原型或设计稿 | 对应 `signoffs` 改回 `pending`；新 PRD 明确不需要原型/设计时为 `skipped` |
 | 已确认的设计图片或其视觉方案改变 | 保留原图与评审快照；`design_image_status: pending`、清空 `design_image_fingerprint`，重新看图确认后复核 HTML 及下游；不需要设计时为 `skipped` |
 | `05-tasks.md` 或 `06-dev-log.md` | `task_status: {}` |
+| 接口契约、协作计划或相关实现改变 | 复核 `api_integration_required` 与批次覆盖；已有 `06-integration.md` 登记失效，`open_api_issues` 保留未关闭 API 问题，迁移后重做受影响批次的交付、审阅与真实联调 |
 | `07-walkthrough.md` | `walkthrough_result: not_run`；不需要设计时为 `skipped` |
 | `08-test-report.md` | `acceptance_results: {}` |
 | `10-regression.md` | `regression_result: not_run`、`regression_conditions: []`、`regression_user_confirmed: false` |
-| `08-test-report.md` 或 `10-regression.md` | `final_review_result: not_run`、`final_review_evidence: ""` |
-| `11-release.md` | 新一轮 `release_status: planned`；这不代表撤销了实际部署，也不授权执行生产回滚 |
+| `08-test-report.md` 或 `10-regression.md` | `final_review_result: not_run`、`final_review_evidence: ""`、`final_review_session: ""` |
+| `11-release.md` | 需要部署时新一轮 `release_status: planned`；改为无需部署时归档旧产物并设 `skipped`。这不代表撤销了实际部署，也不授权执行生产回滚 |
 
 未受影响的技术栈锁定、开发规范和角色会话不因回退自动清空。重新进入的阶段按 `references/orchestration.md` 新建所需角色，协调器阶段同时新建协调器，在 `session_log` 用新的执行序号记录，不沿用回退前的会话。回退到阶段 5 前，撤下当前映射中的旧 T/E 回填；阶段 8 前撤下旧 E 回填，分别等任务定义和测试执行后再登记，历史映射保持原样。
+
+启用模型配置时同时重置 `model_policy` 当前索引，新执行按 `references/models.md` 生成新快照；`model-policies/` 与 `model_runs.jsonl` 保留原路径和历史，供旧记录追溯。纯模型配置变化按该协议处理生效时机与会话替换，不提升 facts 版本。
 
 仅修正 HTML 对确认图片的还原偏差时，保留图片确认与指纹，更新 HTML 核对证据和受影响的最终确认。替换基准图片时不能只重算指纹沿用旧同意。没有先行生图记录的旧项目保留真实 HTML 历史，再进入阶段 3 做新设计时才启用图片评审。
 
@@ -89,6 +95,8 @@ invalidated_artifacts:
 变更还影响已锁定的技术栈时，另按 `references/tech-stack.md` 重新确认和锁定，并复核架构、任务、依赖、开发核对记录与测试，不能保留旧指纹继续开发。
 
 ## 版本一致性
+
+代码审阅随测试报告保留其基线、目标与文件范围。实现、测试、配置或依赖发生后续变更时，复查受影响部分并在修复或回归产物追加证据；原初审不回写为新版本通过。技术缺陷与验收缺陷都保留未关闭记录，技术依据变化时复核检查口径，不通过改类型消除验收失败。
 
 - `facts.md` 头部写 `> 版本：vN`
 - 阶段 1 起的当前有效产物头部写 `> 依据 facts vN 生成`；阶段 0 始终为 v0

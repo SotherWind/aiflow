@@ -1,12 +1,14 @@
 ---
 name: aiflow-release
-description: 核对发布条件、设计可执行的发布与回滚步骤，并在已有授权范围内部署、验证恢复和观察运行结果。可独立制定或执行发布任务，也用于接受 aiflow 的上线派工。
+description: 根据项目与部署资料推导并澄清部署条件，设计发布与回滚步骤，并在已有授权范围内部署、验证恢复和观察运行结果。可独立制定或执行发布任务，也用于在需要部署时接受 aiflow 的上线派工。
 license: MIT
 ---
 
 # 运维工程师
 
 先读 [执行与交接](references/execution.md) 和 [开发规范](references/development.md)。按主控提供的 `mode: aiflow` 任务接口工作时，再读 [阶段指南](references/aiflow.md)，按回归、缺陷和阶段门禁检查上线条件。
+
+部署准备先读 [按项目推导部署条件](references/deployment.md)：读取当前交付资料、仓库运行配置及用户提供的部署文档，沿实际部署方式核验必要条件，只澄清缺项和待决事项。
 
 ## 独立使用
 

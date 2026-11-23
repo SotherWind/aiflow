@@ -119,6 +119,44 @@ class DistributionTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["role_paths"]["fe"], str((extra / "aiflow-frontend").resolve()))
 
+    def test_non_deployment_roles_resolve_without_installed_operator(self):
+        parent = self.root / "local-delivery" / "skills"
+        copy_skill("aiflow", parent)
+        for role in CONFIG["roles"]:
+            if role["id"] != "operator":
+                copy_skill(role["skill"], parent)
+        selected = [role["id"] for role in CONFIG["roles"] if role["id"] != "operator"]
+        result = RESOLVER.resolve_roles(parent / "aiflow", requested=selected)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(set(result["role_paths"]), set(selected))
+        result = RESOLVER.resolve_roles(parent / "aiflow", requested=["operator"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(set(result["errors"]), {"operator"})
+
+    def test_first_stage_only_needs_analyst_installation(self):
+        flow = copy_skill("aiflow", self.root)
+        copy_skill("aiflow-analyst", self.root)
+        result = subprocess.run([sys.executable, "-B", str(flow / "scripts" / "resolve_roles.py"),
+                                 "--role", "analyst"], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(set(json.loads(result.stdout)["role_paths"]), {"analyst"})
+
+    def test_relocated_main_skill_can_resolve_models_without_role_installation(self):
+        flow = copy_skill("aiflow", self.root / "模型技能")
+        project = self.root / "项目"
+        project.mkdir()
+        result = subprocess.run([sys.executable, "-B", str(flow / "scripts" / "resolve_models.py"), str(project),
+                                 "--stage", "6", "--role", "aiflow-backend", "--model", "aiflow-backend=fixture-model", "--execution", "1"],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["role_models"]["be"]["launch"], {"model": "fixture-model"})
+        self.assertEqual(output["role_models"]["be"]["skill"], "aiflow-backend")
+        self.assertTrue((flow / "scripts" / "model_records.py").is_file())
+        self.assertTrue((flow / "references" / "models.md").is_file())
+        self.assertTrue((flow / "templates" / "models.json").is_file())
+        self.assertEqual(list(project.iterdir()), [])
+
     def test_mismatched_version_is_rejected(self):
         parent = self.installed_bundle()
         path = parent / "aiflow-backend" / "role.json"
@@ -129,6 +167,34 @@ class DistributionTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(set(result["errors"]), {"be"})
         self.assertIn("version", result["errors"]["be"]["candidates"][0]["reason"])
+
+    def test_v010_tester_without_review_guide_is_rejected_even_if_self_consistent(self):
+        flow = copy_skill("aiflow", self.root)
+        role = copy_skill("aiflow-test", self.root)
+        metadata = read_json(role / "role.json")
+        metadata["bundle_version"] = "0.1.0"
+        for name in list(metadata["resources"]):
+            if name not in ("LICENSE", "references/execution.md", "references/development.md"):
+                (role / name).unlink()
+                del metadata["resources"][name]
+        write_json(role / "role.json", metadata)
+        result = RESOLVER.resolve_roles(flow, requested=["tester"])
+        self.assertFalse(result["ok"], result)
+        self.assertIn("bundle version", result["errors"]["tester"]["candidates"][0]["reason"])
+
+    def test_operator_requires_its_installed_deployment_guide(self):
+        flow = copy_skill("aiflow", self.root)
+        role = copy_skill("aiflow-release", self.root)
+        self.assertTrue(RESOLVER.resolve_roles(flow, requested=["operator"])["ok"])
+        guide = role / "references" / "deployment.md"
+        guide.unlink()
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                if not missing:
+                    guide.write_text("wrong release guide", encoding="utf-8")
+                result = RESOLVER.resolve_roles(flow, requested=["operator"])
+                self.assertFalse(result["ok"], result)
+                self.assertIn("deployment.md", result["errors"]["operator"]["candidates"][0]["reason"])
 
     def test_missing_or_changed_resource_is_rejected(self):
         parent = self.installed_bundle()

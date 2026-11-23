@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "default": "inherit",
+  "profiles": {
+    "coding": {
+      "model": "<开发模型ID>"
+    },
+    "deep": {
+      "model": "<分析模型ID>",
+      "reasoning_effort": "high"
+    }
+  },
+  "roles": {
+    "aiflow-frontend": "coding",
+    "aiflow-backend": "coding",
+    "aiflow-test": "deep"
+  },
+  "stages": {
+    "6": {
+      "roles": {
+        "aiflow-backend": "deep"
+      }
+    },
+    "9": {
+      "default": "deep"
+    }
+  },
+  "on_unavailable": "error"
+}
